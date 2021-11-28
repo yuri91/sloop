@@ -4,6 +4,7 @@ use std::convert::AsRef;
 use std::path::{Path, PathBuf};
 use std::io::Write;
 use structopt::StructOpt;
+use log::{info, debug};
 
 #[derive(Debug, StructOpt)]
 #[structopt(name = "sloop", about = "minimal container manager")]
@@ -41,15 +42,28 @@ struct Conf {
 }
 
 #[derive(Debug)]
-pub struct Volume {
-    name: String,
+pub struct VolumeMapping {
+    pair: String,
 }
-impl Volume {
-    pub fn new(name: String) -> Volume {
-        Volume { name }
+impl VolumeMapping {
+    pub fn new(pair: String) -> anyhow::Result<VolumeMapping> {
+        if pair.find(':').is_none() {
+            anyhow::bail!("Missing ':' separator in volume definition: {}", pair);
+        }
+        Ok(VolumeMapping { pair })
     }
-    pub fn name(&self) -> &str {
-        &self.name
+}
+
+#[derive(Debug)]
+pub struct PortMapping {
+    pair: String,
+}
+impl PortMapping {
+    pub fn new(pair: String) -> anyhow::Result<PortMapping> {
+        if pair.find(':').is_none() {
+            anyhow::bail!("Missing ':' separator in port definition: {}", pair);
+        }
+        Ok(PortMapping { pair })
     }
 }
 
@@ -124,8 +138,8 @@ pub struct Image {
 
 impl ImageBuilder {
     fn build(self) -> anyhow::Result<Image> {
-        let tag = format!("{}:{}", self.name, self.version);
-        let tag_latest = format!("{}:latest", self.name);
+        let tag = format!("sloop/{}:{}", self.name, self.version);
+        let tag_latest = format!("sloop/{}:latest", self.name);
         let mut script = format!("FROM {}\n", self.base_url);
         let mut tmps = Vec::new();
         for (path, content) in self.files {
@@ -148,7 +162,7 @@ impl ImageBuilder {
         if !self.cmd.is_empty() {
             script.push_str(&format!("CMD {:?}\n", self.cmd));
         }
-        cmd(&["buildah", "bud", "-t", &tag_latest, "-t", &tag, "-f", "-"], Some(&script))?;
+        cmd(&["buildah", "bud", "--layers", "-t", &tag_latest, "-t", &tag, "-f", "-"], Some(&script))?;
         Ok(Image {
             name: self.name,
             version: self.version,
@@ -162,18 +176,22 @@ pub struct Service {
     name: String,
     version: String,
     image: Image,
-    volumes: Vec<Volume>,
+    volumes: Vec<VolumeMapping>,
+    ports: Vec<PortMapping>,
     networks: Vec<Network>,
     dependencies: Vec<Dependency>,
 }
 
+static NAME_PLACEHOLDER: &'static str = "SLOOP_PLACEHOLDER";
+
 impl Service {
-    fn new(name: String, version: String, image: Image, volumes: Vec<Volume>, networks: Vec<Network>, dependencies: Vec<Dependency>) -> anyhow::Result<Service> {
+    fn new(name: String, version: String, image: Image, volumes: Vec<VolumeMapping>, ports: Vec<PortMapping>, networks: Vec<Network>, dependencies: Vec<Dependency>) -> anyhow::Result<Service> {
         Ok(Service {
             name,
             version,
             image,
             volumes,
+            ports,
             networks,
             dependencies,
         })
@@ -211,22 +229,80 @@ impl Service {
             conf.name,
             version,
             image_builder.build()?,
-            conf.volumes.into_iter().map(Volume::new).collect(),
+            conf.volumes.into_iter().map(VolumeMapping::new).collect::<anyhow::Result<_>>()?,
+            conf.ports.into_iter().map(PortMapping::new).collect::<anyhow::Result<_>>()?,
             conf.networks.into_iter().map(Network::new).collect::<anyhow::Result<_>>()?,
             dependencies,
         )?)
+    }
+    fn podman_create(&self) -> anyhow::Result<()> {
+        let mut args: Vec<_> = vec!["podman", "container", "create", "--init", "--name", NAME_PLACEHOLDER];
+        for v in &self.volumes {
+            args.extend(["-v", &v.pair]);
+        }
+        for n in &self.networks {
+            args.extend(["--net", &n.name]);
+        }
+        for p in &self.ports {
+            args.extend(["-p", &p.pair]);
+        }
+        let name_ver = format!("sloop/{}:latest", self.name);
+        args.push(&name_ver);
+        cmd(&args, None)?;
+        Ok(())
+    }
+    fn podman_remove(&self) -> anyhow::Result<()> {
+        cmd(&["podman","container","rm", NAME_PLACEHOLDER], None)?;
+        Ok(())
+    }
+    fn podman_generate(&self) -> anyhow::Result<String> {
+        let out = cmd(&["podman","generate","systemd", "--name", "--new", NAME_PLACEHOLDER, "--container-prefix", "", "--separator", ""], None)?;
+        let out = out.replace(NAME_PLACEHOLDER, &self.name);
+        Ok(out)
+    }
+    fn add_dependencies(&self, out: &mut String) {
+        let mut requirements = String::new();
+        for d in &self.dependencies {
+            let verb = match d.kind {
+                DependencyKind::Wants => {
+                    "Wants"
+                },
+                DependencyKind::Requires => {
+                    "Requires"
+                },
+                DependencyKind::After => {
+                    "After"
+                },
+            };
+            requirements.push_str(&format!("{}={}\n", verb, d.name));
+        }
+        let insert_pt = out.find("Documentation").unwrap();
+        out.insert_str(insert_pt, &requirements);
+    }
+    fn remove_comments(&self, out: &mut String) {
+        let unit_start = out.find("[Unit]").unwrap();
+        out.replace_range(..unit_start, "");
+    }
+    fn gen_service(&self) -> anyhow::Result<String> {
+        self.podman_create()?;
+        let mut out = self.podman_generate()?;
+        self.podman_remove()?;
+        self.add_dependencies(&mut out);
+        self.remove_comments(&mut out);
+        Ok(out)
     }
 }
 
 fn process<P: AsRef<Path>>(conf_path: P) -> anyhow::Result<()> {
     let conf_str = std::fs::read_to_string(conf_path)?;
     let conf: Conf = toml::from_str(&conf_str)?;
-    let service = Service::from_conf(conf);
-    println!("{:?}", service);
+    let service = Service::from_conf(conf)?;
+    println!("{:?}", service.gen_service());
     Ok(())
 }
 
 fn cmd<T: AsRef<str>>(args: &[T], stdin: Option<&str>) -> anyhow::Result<String> {
+    info!("+ {:?}", args.iter().map(|a| a.as_ref()).collect::<Vec<&str>>());
     let mut child = std::process::Command::new(args[0].as_ref())
         .args(args[1..].iter().map(|a|a.as_ref()))
         .stdin(std::process::Stdio::piped())
@@ -242,10 +318,13 @@ fn cmd<T: AsRef<str>>(args: &[T], stdin: Option<&str>) -> anyhow::Result<String>
     }
     let mut ret = String::from_utf8(out.stdout)?;
     ret.push_str(&String::from_utf8(out.stderr)?);
+    debug!("output: -----------------------\n{}\n--------------------------------\n", ret);
     Ok(ret)
 }
 
 fn main() -> anyhow::Result<()> {
+    sudo::with_env(&["RUST_BACKTRACE", "RUST_LOG"]).expect("Cannot gain root privilege");
+    pretty_env_logger::init();
     let opt = Opt::from_args();
     for conf in opt.confs {
         process(&conf)?;

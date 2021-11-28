@@ -6,8 +6,6 @@ entrypoint = ["/bin/maddy", "-config", "/etc/maddy/maddy.conf"]
 
 volumes = [
 	"maddy_data:/data",
-	"/etc/maddy/certs/mx1.yuri.space/fullchain.pem:/etc/maddy/certs/mx1.yuri.space/fullchain.pem",
-	"/etc/maddy/certs/mx1.yuri.space/privkey.pem:/etc/maddy/certs/mx1.yuri.space/privkey.pem",
 ]
 
 networks = [
@@ -76,6 +74,7 @@ msgpipeline local_routing {
         reject 550 5.1.1 "User doesn't exist"
     }
 }
+
 
 smtp tcp://0.0.0.0:25 {
     tls &acme_tls
