@@ -162,7 +162,9 @@ impl ImageBuilder {
         if !self.cmd.is_empty() {
             script.push_str(&format!("CMD {:?}\n", self.cmd));
         }
-        cmd(&["buildah", "bud", "--layers", "-t", &tag_latest, "-t", &tag, "-f", "-"], Some(&script))?;
+        debug!("Dockerfile:\n{}", script);
+        let res = cmd(&["buildah", "bud", "--layers", "-t", &tag_latest, "-t", &tag, "-f", "-"], Some(&script))?;
+        debug!("build output:\n{}", res);
         Ok(Image {
             name: self.name,
             version: self.version,
@@ -297,7 +299,7 @@ fn process<P: AsRef<Path>>(conf_path: P) -> anyhow::Result<()> {
     let conf_str = std::fs::read_to_string(conf_path)?;
     let conf: Conf = toml::from_str(&conf_str)?;
     let service = Service::from_conf(conf)?;
-    println!("{:?}", service.gen_service());
+    info!("service: {:?}", service.gen_service());
     Ok(())
 }
 
@@ -313,12 +315,12 @@ fn cmd<T: AsRef<str>>(args: &[T], stdin: Option<&str>) -> anyhow::Result<String>
         child.stdin.take().unwrap().write_all(s.as_bytes())?;
     }
     let out = child.wait_with_output()?;
-    if !out.status.success() {
-        anyhow::bail!("non-zero exit status for {}", args[0].as_ref());
-    }
     let mut ret = String::from_utf8(out.stdout)?;
     ret.push_str(&String::from_utf8(out.stderr)?);
     debug!("output: -----------------------\n{}\n--------------------------------\n", ret);
+    if !out.status.success() {
+        anyhow::bail!("non-zero exit status for {}", args[0].as_ref());
+    }
     Ok(ret)
 }
 
@@ -327,6 +329,7 @@ fn main() -> anyhow::Result<()> {
     pretty_env_logger::init();
     let opt = Opt::from_args();
     for conf in opt.confs {
+        info!("processing {:?}", conf);
         process(&conf)?;
     }
     Ok(())

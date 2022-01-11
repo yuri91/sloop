@@ -6,6 +6,7 @@ version = "0.1.0"
 [dependencies]
 anyhow = "1.0.47"
 chrono = "0.4.19"
+serde = { version = "1.0.130", features = ["derive"] }
 structopt = "0.3.25"
 sudo = "0.6.0"
 log = "0.4.14"
@@ -13,7 +14,3 @@ pretty_env_logger = "0.4.0"
 tempfile = "3.2.0"
 thiserror = "1.0.30"
 toml = "0.5.8"
-
-[dependencies.serde]
-features = ["derive"]
-version = "1.0.130"
