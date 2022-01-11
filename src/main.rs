@@ -151,10 +151,10 @@ impl ImageBuilder {
             tmps.push(f);
         }
         for (k, v) in self.labels {
-            script.push_str(&format!("LABEL {}={}\n", k, v));
+            script.push_str(&format!("LABEL \"{}\"=\"{}\"\n", k, v));
         }
         for (k, v) in self.env {
-            script.push_str(&format!("ENV {}={}\n", k, v));
+            script.push_str(&format!("ENV \"{}\"=\"{}\"\n", k, v));
         }
         if !self.entrypoint.is_empty() {
             script.push_str(&format!("ENTRYPOINT {:?}\n", self.entrypoint));
