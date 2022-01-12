@@ -11,6 +11,10 @@ use log::{info, debug};
 struct Opt {
     #[structopt(parse(from_os_str))]
     confs: Vec<PathBuf>,
+    #[structopt(short, long)]
+    start: bool,
+    #[structopt(short, long)]
+    enable: bool,
 }
 
 #[derive(Debug, Deserialize)]
@@ -109,12 +113,6 @@ pub struct Dependency {
 impl Dependency {
     pub fn new(kind: DependencyKind, name: String) -> Dependency {
         Dependency { kind, name }
-    }
-    fn kind(&self) -> DependencyKind {
-        self.kind
-    }
-    fn name(&self) -> &str {
-        &self.name
     }
 }
 
@@ -295,11 +293,59 @@ impl Service {
     }
 }
 
-fn process<P: AsRef<Path>>(conf_path: P) -> anyhow::Result<()> {
+mod systemctl {
+    use super::cmd;
+    use log::info;
+    pub fn start(service: &str) -> anyhow::Result<()> {
+        info!("starting {}", service);
+        cmd(&["systemctl", "start", service], None)?;
+        Ok(())
+    }
+    pub fn stop(service: &str) -> anyhow::Result<()> {
+        info!("stopping {}", service);
+        cmd(&["systemctl", "stop", service], None)?;
+        Ok(())
+    }
+    pub fn enable(service: &str) -> anyhow::Result<()> {
+        info!("enabling {}", service);
+        cmd(&["systemctl", "enable", service], None)?;
+        Ok(())
+    }
+    pub fn is_active(service: &str) -> bool {
+        cmd(&["systemctl", "is-active", service], None).is_ok()
+    }
+    pub fn daemon_reload() -> anyhow::Result<()> {
+        cmd(&["systemctl", "daemon-reload"], None)?;
+        Ok(())
+    }
+    pub fn install(service: &str, content: &str) -> anyhow::Result<()> {
+        info!("installing {}", service);
+        let mut path = std::path::PathBuf::new();
+        path.push("/etc/systemd/system/");
+        path.push(service);
+        std::fs::write(path, content)?;
+        Ok(())
+    }
+}
+
+fn process<P: AsRef<Path>>(conf_path: P, start: bool, enable: bool) -> anyhow::Result<()> {
     let conf_str = std::fs::read_to_string(conf_path)?;
     let conf: Conf = toml::from_str(&conf_str)?;
+    let service_name = format!("{}.service", conf.name);
     let service = Service::from_conf(conf)?;
-    info!("service: {:?}", service.gen_service());
+    let service_content = service.gen_service()?;
+    debug!("service: {:?}", service_content);
+    if systemctl::is_active(&service_name) {
+        systemctl::stop(&service_name)?;
+    }
+    systemctl::install(&service_name, &service_content)?;
+    systemctl::daemon_reload()?;
+    if start {
+        systemctl::start(&service_name)?;
+    }
+    if enable {
+        systemctl::enable(&service_name)?;
+    }
     Ok(())
 }
 
@@ -330,7 +376,7 @@ fn main() -> anyhow::Result<()> {
     let opt = Opt::from_args();
     for conf in opt.confs {
         info!("processing {:?}", conf);
-        process(&conf)?;
+        process(&conf, opt.start, opt.enable)?;
     }
     Ok(())
 }
