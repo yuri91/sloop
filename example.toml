@@ -1,0 +1,27 @@
+name = "sloop_example"
+
+image = "docker.io/busybox:latest"
+
+entrypoint = ["/bin/busybox"]
+
+cmd = ["sh", "-c", "cat $FILE"]
+
+volumes = [
+	"sloop_example_volume:/volume",
+]
+
+networks = [
+	"public",
+]
+
+[labels]
+"mylabel" = "value"
+
+[env]
+FILE = "/hello.txt"
+
+[files]
+"/hello.txt" = '''
+I am an arbitrary text file
+'''
+
