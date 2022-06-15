@@ -1,5 +1,6 @@
 use crate::objects::*;
 use crate::plan;
+use log::info;
 
 static NAME_PLACEHOLDER: &'static str = "SLOOP_PLACEHOLDER";
 
@@ -118,7 +119,116 @@ static NAME_PLACEHOLDER: &'static str = "SLOOP_PLACEHOLDER";
 //}
 //
 
-pub fn dry_run(plan: &plan::Plan) {}
-pub fn exec(plan: &mut plan::Plan) -> anyhow::Result<()> {
+trait Runner {
+    fn create_volume(&self, v: &Volume) -> anyhow::Result<()>;
+    fn remove_volume(&self, v: &str) -> anyhow::Result<()>;
+    fn create_network(&self, n: &Network) -> anyhow::Result<()>;
+    fn remove_network(&self, n: &str) -> anyhow::Result<()>;
+    fn create_image(&self, i: &Image) -> anyhow::Result<()>;
+    fn remove_image(&self, i: &str) -> anyhow::Result<()>;
+    fn create_unit(&self, v: &Unit) -> anyhow::Result<()>;
+    fn remove_unit(&self, v: &str) -> anyhow::Result<()>;
+}
+struct DryRunner;
+struct RealRunner;
+
+impl Runner for RealRunner {
+    fn create_volume(&self, v: &Volume) -> anyhow::Result<()> {
+        Ok(())
+    }
+    fn remove_volume(&self, v: &str) -> anyhow::Result<()> {
+        Ok(())
+    }
+    fn create_network(&self, n: &Network) -> anyhow::Result<()> {
+        Ok(())
+    }
+    fn remove_network(&self, n: &str) -> anyhow::Result<()> {
+        Ok(())
+    }
+    fn create_image(&self, i: &Image) -> anyhow::Result<()> {
+        Ok(())
+    }
+    fn remove_image(&self, i: &str) -> anyhow::Result<()> {
+        Ok(())
+    }
+    fn create_unit(&self, v: &Unit) -> anyhow::Result<()> {
+        Ok(())
+    }
+    fn remove_unit(&self, v: &str) -> anyhow::Result<()> {
+        Ok(())
+    }
+}
+
+impl Runner for DryRunner {
+    fn create_volume(&self, v: &Volume) -> anyhow::Result<()> {
+        info!("CREATE volume {}", v.name);
+        Ok(())
+    }
+    fn remove_volume(&self, v: &str) -> anyhow::Result<()> {
+        info!("REMOVE volume {}", v);
+        Ok(())
+    }
+    fn create_network(&self, n: &Network) -> anyhow::Result<()> {
+        info!("CREATE network {}", n.name);
+        Ok(())
+    }
+    fn remove_network(&self, n: &str) -> anyhow::Result<()> {
+        info!("REMOVE network {}", n);
+        Ok(())
+    }
+    fn create_image(&self, i: &Image) -> anyhow::Result<()> {
+        info!("CREATE image {}", i.name);
+        Ok(())
+    }
+    fn remove_image(&self, i: &str) -> anyhow::Result<()> {
+        info!("REMOVE image {}", i);
+        Ok(())
+    }
+    fn create_unit(&self, u: &Unit) -> anyhow::Result<()> {
+        info!("CREATE unit {}", u.name);
+        Ok(())
+    }
+    fn remove_unit(&self, u: &str) -> anyhow::Result<()> {
+        info!("REMOVE unit {}", u);
+        Ok(())
+    }
+}
+
+fn do_run<R: Runner>(runner: R, plan: &plan::Plan) -> anyhow::Result<()> {
+    for a in plan.iter() {
+        match a {
+            plan::Action::AddVolume(v) => {
+                runner.create_volume(v)?;
+            },
+            plan::Action::RemoveVolume(v) => {
+                runner.remove_volume(v)?;
+            },
+            plan::Action::AddNetwork(n) => {
+                runner.create_network(n)?;
+            },
+            plan::Action::RemoveNetwork(n) => {
+                runner.remove_network(n)?;
+            },
+            plan::Action::AddImage(i) => {
+                runner.create_image(i)?;
+            },
+            plan::Action::RemoveImage(i) => {
+                runner.remove_image(i)?;
+            },
+            plan::Action::AddUnit(u) => {
+                runner.create_unit(u)?;
+            },
+            plan::Action::RemoveUnit(u) => {
+                runner.remove_unit(u)?;
+            },
+        }
+    }
     Ok(())
+}
+
+pub fn dry_run(plan: &plan::Plan) {
+    do_run(DryRunner, plan).unwrap();
+}
+pub fn exec(plan: &mut plan::Plan) -> anyhow::Result<()> {
+    do_run(RealRunner, plan)
 }

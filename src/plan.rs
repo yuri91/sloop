@@ -11,6 +11,7 @@ pub enum Action {
     AddNetwork(Network),
     AddImage(Image),
     AddUnit(Unit),
+    RemoveVolume(String),
     RemoveNetwork(String),
     RemoveImage(String),
     RemoveUnit(String),
@@ -26,6 +27,9 @@ impl Plan {
     }
     pub fn queue(&mut self, a: Action) {
         self.actions.push(a);
+    }
+    pub fn iter(&self) -> impl Iterator<Item=&Action> {
+        self.actions.iter()
     }
 }
 
