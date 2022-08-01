@@ -58,7 +58,7 @@ pub mod container {
 
     use crate::utils::cmd;
 
-    pub fn create<I1, I2, I3, I4>(
+    pub fn create<'a, I1, I2, I3, I4, K>(
         name: &str,
         volumes: I1,
         networks: I2,
@@ -66,10 +66,11 @@ pub mod container {
         labels: I4,
     ) -> anyhow::Result<()>
     where
-        I1: IntoIterator<Item = String>,
-        I2: IntoIterator<Item = String>,
-        I3: IntoIterator<Item = String>,
-        I4: IntoIterator<Item = String>,
+        I1: IntoIterator<Item = &'a K>,
+        I2: IntoIterator<Item = &'a K>,
+        I3: IntoIterator<Item = (u16, u16)>,
+        I4: IntoIterator<Item = (&'a K, &'a K)>,
+        K: 'a + std::borrow::ToOwned<Owned = String> + std::fmt::Display,
     {
         let mut args: Vec<_> = vec![
             "podman",
@@ -85,16 +86,16 @@ pub mod container {
         .map(str::to_owned)
         .collect();
         for v in volumes {
-            args.extend(["-v".to_owned(), v]);
+            args.extend(["-v".to_owned(), v.to_owned()]);
         }
         for n in networks {
-            args.extend(["--net".to_owned(), n]);
+            args.extend(["--net".to_owned(), n.to_owned()]);
         }
         for p in ports {
-            args.extend(["-p".to_owned(), p]);
+            args.extend(["-p".to_owned(), format!("{}:{}", p.0, p.1)]);
         }
         for l in labels {
-            args.extend(["-l".to_owned(), l]);
+            args.extend(["-l".to_owned(), format!("{}={}", l.0, l.1)]);
         }
         let name_ver = format!("sloop/{}:latest", name);
         args.push(name_ver);
@@ -107,14 +108,15 @@ pub mod container {
         Ok(())
     }
 
-    pub fn generate_unit<'a, I>(
+    pub fn generate_unit<'a, I, K>(
         name: &str,
         wants: I,
         requires: I,
         after: I,
     ) -> anyhow::Result<String>
     where
-        I: IntoIterator<Item = String>,
+        I: IntoIterator<Item = &'a K>,
+        K: 'a + std::borrow::ToOwned<Owned=String>,
     {
         let mut args: Vec<_> = vec![
             "podman",
@@ -133,13 +135,13 @@ pub mod container {
         .map(str::to_owned)
         .collect();
         for w in wants {
-            args.push(w);
+            args.push(w.to_owned());
         }
         for r in requires {
-            args.push(r);
+            args.push(r.to_owned());
         }
         for a in after {
-            args.push(a);
+            args.push(a.to_owned());
         }
         let out = cmd(&args, None)?;
         Ok(out)
@@ -220,6 +222,8 @@ pub mod network {
 
 pub mod image {
     use std::collections::HashMap;
+    use crate::utils::cmd;
+
     pub fn all() -> anyhow::Result<Vec<String>> {
         super::find_all("image")
     }
@@ -230,5 +234,25 @@ pub mod image {
 
     pub fn labels(u: &str) -> anyhow::Result<HashMap<String, String>> {
         super::labels("image", u)
+    }
+
+    pub fn create(name: &str, dockerfile: &str, tag: &str) -> anyhow::Result<()> {
+        cmd(&["buildah", "bud", "--layers", "-t", &format!("sloop/{}:{}", name, tag), "-f", "-"], Some(dockerfile))?;
+        Ok(())
+    }
+
+    pub fn remove(name: &str, tag: &str) -> anyhow::Result<()> {
+        cmd(&["buildah", "rmi", &format!("sloop/{}:{}", name, tag)], None)?;
+        Ok(())
+    }
+
+    pub fn tag(name: &str, curtag: &str, newtag: &str) -> anyhow::Result<()> {
+        cmd(&["podman", "tag", &format!("sloop/{}:{}", name, curtag), &format!("sloop/{}:{}", name, newtag)], None)?;
+        Ok(())
+    }
+
+    pub fn untag(name: &str, tag: &str) -> anyhow::Result<()> {
+        cmd(&["podman", "untag", &format!("sloop/{}:{}", name, tag)], None)?;
+        Ok(())
     }
 }

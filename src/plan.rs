@@ -9,12 +9,17 @@ use crate::podman;
 pub enum Action {
     AddVolume(Volume),
     AddNetwork(Network),
-    AddImage(Image),
-    AddUnit(Unit),
+    BuildImage(Image),
+    CommitImage(String, u64),
+    CreateContainer(Unit),
+    InstallUnit(Unit),
+    StartUnit(String),
+    StopUnit(String),
+    UninstallUnit(Unit),
+    RemoveContainer(String),
     RemoveVolume(String),
     RemoveNetwork(String),
-    RemoveImage(String),
-    RemoveUnit(String),
+    RemoveImage(String, u64),
 }
 pub struct Plan {
     actions: Vec<Action>,
@@ -168,7 +173,7 @@ pub fn plan(ctx: &Context) -> anyhow::Result<Plan> {
             .iter()
             .find(|img| &img.name == i)
             .expect("cannot find image by name");
-        plan.queue(Action::AddImage(img.clone()));
+        plan.queue(Action::BuildImage(img.clone()));
     }
     for v in volumes_added {
         let vol = ctx
@@ -188,23 +193,48 @@ pub fn plan(ctx: &Context) -> anyhow::Result<Plan> {
     }
 
     for u in units_removed {
-        plan.queue(Action::RemoveUnit(u.to_owned()));
-    }
-    for i in images_removed {
-        plan.queue(Action::RemoveImage(i.to_owned()));
-    }
-    for n in networks_removed {
-        plan.queue(Action::RemoveNetwork(n.to_owned()));
+        plan.queue(Action::StopUnit(u.to_owned()));
     }
 
+    for u in units_removed {
+        plan.queue(Action::RemoveContainer(u.to_owned()));
+    }
+    for i in images_added {
+        let hash = new_ctx.images.iter().find(|e| e.name == i).expect("cannot find image by name").hash;
+        plan.queue(Action::CommitImage(i.to_owned(), hash));
+    }
     for u in units_added {
         let unit = ctx
             .units
             .iter()
             .find(|unit| &unit.name == u)
             .expect("cannot find unit by name");
-        plan.queue(Action::AddUnit(unit.clone()));
+        plan.queue(Action::CreateContainer(unit.clone()));
     }
+    for u in units_added {
+        let unit = ctx
+            .units
+            .iter()
+            .find(|unit| &unit.name == u)
+            .expect("cannot find unit by name");
+        plan.queue(Action::InstallUnit(unit.clone()));
+    }
+    for u in units_added {
+        let unit = ctx
+            .units
+            .iter()
+            .find(|unit| &unit.name == u)
+            .expect("cannot find unit by name");
+        plan.queue(Action::StartUnit(unit.name.to_owned()));
+    }
+    for n in networks_removed {
+        plan.queue(Action::RemoveNetwork(n.to_owned()));
+    }
+    for i in images_removed {
+        let hash = old_ctx.images.iter().find(|e| e.name == i).expect("cannot find image by name").hash;
+        plan.queue(Action::RemoveImage(i.to_owned(), hash));
+    }
+
 
     Ok(plan)
 }

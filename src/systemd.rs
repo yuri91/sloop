@@ -24,15 +24,10 @@ pub fn daemon_reload() -> anyhow::Result<()> {
 }
 pub fn install(service: &str, content: &str) -> anyhow::Result<()> {
     info!("installing {}", service);
-    let mut path = std::path::PathBuf::new();
-    path.push("/etc/systemd/system/");
-    path.push(service);
-    std::fs::write(path, content)?;
+    std::fs::write(&format!("/etc/systemd/system/{}.service", service), content)?;
     Ok(())
 }
-pub fn read(service: &str) -> Option<String> {
-    let mut path = std::path::PathBuf::new();
-    path.push("/etc/systemd/system/");
-    path.push(service);
-    std::fs::read_to_string(path).ok()
+pub fn uninstall(service: &str) -> anyhow::Result<()> {
+    std::fs::remove_file(&format!("/etc/systemd/system/{}.service", service))?;
+    Ok(())
 }
