@@ -7,29 +7,29 @@ package sloop
 	name: string
 }
 #File: {
-	content: string
+	content:     string
 	permissions: uint16
 } | string
 
 #PortBinding: {
-	host: uint16
+	host:    uint16
 	service: uint16
 } | uint16
 
 #Image: {
 	name: string
 	from: string
-	files: [string]:#File
-	labels: [string]:string
-	env: [string]:string
+	files: [string]:  #File
+	labels: [string]: string
+	env: [string]:    string
 	entrypoint: [...string]
 	cmd: [...string]
-	#mounts: [string]:string
+	#mounts: [string]: string
 }
 #Service: {
-	name: string
+	name:  string
 	image: #Image
-	volumes: [string]:#Volume
+	volumes: [string]: #Volume
 	ports: [...#PortBinding]
 	networks: [...#Network]
 	wants: [...#Dependency]
@@ -37,36 +37,34 @@ package sloop
 	after: [...#Dependency]
 	...
 }
-#UnitName: =~"^(\\.service)|(\\.target)$"
+#UnitName:   =~"^(\\.service)|(\\.target)$"
 #Dependency: #Service | #UnitName
 
-$volume: [Name=_]: #Volume & { name: string | *Name}
+$volume: [Name=_]: #Volume & {name: string | *Name}
 
-$network: [Name=_]: #Network & { name: string | *Name}
+$network: [Name=_]: #Network & {name: string | *Name}
 
-$image: [Name=_]: #Image & { name: string | *Name }
+$image: [Name=_]: #Image & {name: string | *Name}
 
 $service: [Name=_]: S=#Service & {
 	name: string | *Name
 	_volumeCheck: {
-		for k,v in S.volumes {
-			"\(v.name).is_in_$volume": [for k1,v1 in $volume if v1.name==v.name {v1}] & [v]
+		for k, v in S.volumes {
+			"\(v.name).is_in_$volume": [ for k1, v1 in $volume if v1.name == v.name {v1}] & [v]
 		}
 	}
 	_networkCheck: {
 		for n in S.networks {
-			"\(n.name).is_in_$network": [for k,v in $network if v.name==n.name {v}] & [n]
+			"\(n.name).is_in_$network": [ for k, v in $network if v.name == n.name {v}] & [n]
 		}
 	}
 	mountCheck: [
-		for k,v in S.image.#mounts {
-			"\(k):\(v).is_mounted": [for k1,v1 in S.volumes if k1==v {v}] & [v]
-		}
+		for k, v in S.image.#mounts {
+			"\(k):\(v).is_mounted": [ for k1, v1 in S.volumes if k1 == v {v}] & [v]
+		},
 	]
 
 }
-
-
 
 $volume: miniflux_db: {
 }
@@ -84,7 +82,7 @@ $service: feeder: {
 		$network.public,
 	]
 	wants: [
-		"network.target"
+		"network.target",
 	]
 }
 
@@ -93,8 +91,8 @@ $service: feeder: {
 	files: {
 		"/hello.txt": {
 			content: """
-			I am a file
-			"""
+				I am a file
+				"""
 			permissions: 0x666
 		}
 	}
