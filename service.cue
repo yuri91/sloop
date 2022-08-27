@@ -71,20 +71,20 @@ $volume: miniflux_db: {
 $network: public: {
 }
 $image: miniflux: {
-	from: "docker.io/miniflux"
+	from: "docker.io/miniflux/miniflux"
 }
-$service: feeder: {
-	image: $image.miniflux
-	volumes: {
-		"/etc/miniflux.db": $volume.miniflux_db
-	}
-	networks: [
-		$network.public,
-	]
-	wants: [
-		"network.target",
-	]
-}
+//$service: feeder: {
+// image: $image.miniflux
+// volumes: {
+//  "/etc/miniflux.db": $volume.miniflux_db
+// }
+// networks: [
+//  $network.public,
+// ]
+// wants: [
+//  "network.target",
+// ]
+//}
 
 #busybox_image: #Image & {
 	from: "docker.io/busybox:latest"
@@ -93,7 +93,7 @@ $service: feeder: {
 			content: """
 				I am a file
 				"""
-			permissions: 0x666
+			permissions: 0o666
 		}
 	}
 	labels: {
