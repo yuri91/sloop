@@ -17,7 +17,7 @@ networks: [ for k, v in $network {v}]
 images: [ for k, v in $image {v}]
 services: [ for k, v in $service {v}]
 
-tool: create: exec.Run & {
+_tool: create: exec.Run & {
 	name:   string
 	exists: bool
 	kind:   string
@@ -28,41 +28,47 @@ tool: create: exec.Run & {
 		{"echo \(kind) \(name) exists"},
 	][0]
 }
-tool: create_kind: [Kind=string]: {
+_tool: create_kind: [Kind=string]: {
 	objects: [...{name: string}]
-	do_list: exec.Run & {
-		cmd:    "podman \(Kind) ls --format \"{{.Name}}\" --filter label=sloop"
-		stdout: string
-		quoted: strings.Split(stdout, "\n")
-		result: [ for v in quoted {strings.Trim(v, "\"")}]
-	}
-	for v in objects {
-		"create_\(Kind)_\(v.name)": tool.create & {
-			kind:   Kind
-			name:   v.name
-			exists: list.Contains(do_list.result, v.name)
+	group: {
+		do_list: exec.Run & {
+			cmd:    "podman \(Kind) ls --format \"{{.Name}}\" --filter label=sloop"
+			stdout: string
+			quoted: strings.Split(stdout, "\n")
+			result: [ for v in quoted {strings.Trim(v, "\"")}]
+			$after: in_deps
+		}
+		for v in objects {
+			"create_\(Kind)_\(v.name)": _tool.create & {
+				kind:   Kind
+				name:   v.name
+				exists: list.Contains(do_list.result, v.name)
+			}
 		}
 	}
+	out_deps: [ for k, v in group {v}]
+	in_deps: [...] | *[]
 }
 
-tool: create_kind: volume: {
+_tool: create_kind: volume: {
 	objects: volumes
 }
-tool: create_kind: network: {
+_tool: create_kind: network: {
 	objects: networks
 }
-tool: create_tempdir: file.MkdirTemp & {
+_tool: create_tempdir: file.MkdirTemp & {
 	name:    string
 	pattern: "files_\(name)"
 }
 
-tool: write_file: file.Create & {
-	tempdir:   string
-	path:      string
+_tool: write_file: file.Create & {
+	tempdir:   string | *"a"
+	path:      string | *"puppa"
+	contents:  string | *"puppa"
 	path_conv: strings.Replace(path, "/", "_", -1)
 	filename:  "\(tempdir)/\(path_conv)"
 }
-tool: create_dockerfile: file.Create & {
+_tool: create_dockerfile: file.Create & {
 	tempdir:  string
 	filename: "\(tempdir)/Dockerfile"
 	image:    #Image
@@ -112,49 +118,56 @@ tool: create_dockerfile: file.Create & {
 		{{end}}
 		""", data)
 }
-tool: create_image: exec.Run & {
+_tool: create_image: exec.Run & {
 	name: string
 	cmd:  "buildah bud --layers -t sloop/\(name)"
 }
-tool: clean_tempdir: exec.Run & {
+_tool: clean_tempdir: exec.Run & {
 	path: string
 	cmd:  "rm -rfv  \(path)"
 }
 
-task: create_volumes:  tool.create_kind.volume
-task: create_networks: tool.create_kind.network
-task: create_images: {
-	group: {
-		for i in images {
-			"create_tempdir_\(i.name)": tool.create_tempdir & {
-				name: i.name
+_task: create_volumes:  _tool.create_kind.volume
+_task: create_networks: _tool.create_kind.network
+_task: create_images: {
+	for i in images {
+		"\(i.name)": {
+			create_tempdir: _tool.create_tempdir & {
+				name:   i.name
+				$after: in_deps
 			}
-			for p, f in i.files {
-				"write_file_\(i.name)_\(p)": tool.write_file & {
-					path:        p
-					contents:    f.content
-					permissions: f.permissions
-					tempdir:     group["create_tempdir_\(i.name)"].path
+			write_files: {
+				for p, f in i.files {
+					"\(p)": _tool.write_file & {
+						path:        p
+						contents:    f.content
+						permissions: f.permissions
+						tempdir:     create_tempdir.path
+					}
 				}
 			}
-			"create_dockerfile_\(i.name)": tool.create_dockerfile & {
-				tempdir: group["create_tempdir_\(i.name)"].path
+			create_dockerfile: _tool.create_dockerfile & {
+				tempdir: create_tempdir.path
 				image:   i
+				$after: [ for k, v in write_files {v}]
 			}
-			"create_image_\(i.name)": tool.create_image & {
-				name: i.name
-				dir:  group["create_tempdir_\(i.name)"].path
+			create_image: _tool.create_image & {
+				name:   i.name
+				dir:    create_tempdir.path
+				$after: create_dockerfile
 			}
-			"clean_tempdir_\(i.name)": tool.clean_tempdir & {
-				path:   group["create_tempdir_\(i.name)"].path
-				$after: group["create_image_\(i.name)"]
+			clean_tempdir: _tool.clean_tempdir & {
+				path:   create_tempdir.path
+				$after: create_image
 			}
 		}
 	}
+	out_deps: [ for i in images {create_images[i.name].clean_tempdir}]
+	in_deps: [...] | *[]
 }
 
 command: list: {
-	task: print: cli.Print & {
+	print: cli.Print & {
 		text: tabwriter.Write([
 			"volumes:",
 			for v in volumes {
@@ -172,19 +185,19 @@ command: list: {
 	}
 }
 
-command: create_volumes:  task.create_volumes
-command: create_networks: task.create_networks
-command: create_images:   task.create_images
+command: create_volumes:  _task.create_volumes
+command: create_networks: _task.create_networks
+command: create_images:   _task.create_images
 
 service_path: "/etc/systemd/system/"
 
-tool: is_service_active: exec.Run & {
+_tool: is_service_active: exec.Run & {
 	name: string
 	cmd: ["bash", "-c", "systemctl is-active \(name).service | cat"]
 	stdout: string
 	active: stdout == "active\n"
 }
-tool: stop_service: exec.Run & {
+_tool: stop_service: exec.Run & {
 	name:   string
 	active: bool
 	cmd:    [
@@ -194,11 +207,11 @@ tool: stop_service: exec.Run & {
 		{"systemctl stop \(name).service"},
 	][0]
 }
-tool: start_service: exec.Run & {
+_tool: start_service: exec.Run & {
 	name: string
 	cmd:  "systemctl enable --now \(name).service"
 }
-tool: create_container: exec.Run & {
+_tool: create_container: exec.Run & {
 	service:  #Service
 	volumes:  strings.Join([ for p, v in service.volumes {"-v \(v.name):\(p)"}], " ")
 	networks: strings.Join([ for n in service.networks {"--net \(n.name)"}], " ")
@@ -213,11 +226,11 @@ tool: create_container: exec.Run & {
 	ports: strings.Join([ for p in _ports {" -p \(p.host):\(p.service)"}], " ")
 	cmd:   "podman container create --init --name \(service.name) --label sloop \(volumes) \(networks) \(ports) sloop/\(service.image.name):latest"
 }
-tool: remove_container: exec.Run & {
+_tool: remove_container: exec.Run & {
 	name: string
 	cmd:  "podman container rm \(name)"
 }
-tool: gen_service: exec.Run & {
+_tool: gen_service: exec.Run & {
 	service: #Service
 	dir:     service_path
 	_wants: [ for w in service.wants {(w & string) | (w.name + ".service")}]
@@ -230,40 +243,37 @@ tool: gen_service: exec.Run & {
 	stdout: string
 }
 
-tool: write_service: file.Create & {
+_tool: write_service: file.Create & {
 	name:     string
 	filename: "\(service_path)\(name).service"
 }
-task: create_services: {
+_task: create_services: {
 	group: {
 		for s in services {
-			"is_service_active_\(s.name)": tool.is_service_active & {
-				name: s.name
+			"is_service_active_\(s.name)": _tool.is_service_active & {
+				name:   s.name
+				$after: in_deps
 			}
-			"stop_service_\(s.name)": tool.stop_service & {
+			"stop_service_\(s.name)": _tool.stop_service & {
 				name:   s.name
 				active: group["is_service_active_\(s.name)"].active
 			}
-			"create_container_\(s.name)": tool.create_container & {
+			"create_container_\(s.name)": _tool.create_container & {
 				service: s
 				$after:  group["stop_service_\(s.name)"]
 			}
-			"gen_service_\(s.name)": tool.gen_service & {
+			"gen_service_\(s.name)": _tool.gen_service & {
 				service: s
 				$after:  group["create_container_\(s.name)"]
 			}
-			"remove_container_\(s.name)": tool.remove_container & {
+			"remove_container_\(s.name)": _tool.remove_container & {
 				name:   s.name
 				$after: group["gen_service_\(s.name)"]
 			}
-			"write_service_\(s.name)": tool.write_service & {
+			"write_service_\(s.name)": _tool.write_service & {
 				name:     s.name
 				contents: group["gen_service_\(s.name)"].stdout
 				$after:   group["remove_container_\(s.name)"]
-			}
-			"start_service_\(s.name)": tool.start_service & {
-				name:   s.name
-				$after: group.daemon_reload
 			}
 		}
 		daemon_reload: {
@@ -271,5 +281,28 @@ task: create_services: {
 			cmd: "systemctl daemon-reload"
 		}
 	}
+	out_deps: [group.daemon_reload]
+	in_deps: [...] | *[]
 }
-command: create_services: task.create_services
+_task: start_services: {
+	group: {
+		for s in services {
+			"start_service_\(s.name)": _tool.start_service & {
+				name: s.name
+			}
+		}
+	}
+	out_deps: [ for k, v in group {v}]
+	in_deps: [...] | *[]
+}
+command: create_services: _task.create_services
+command: start_services:  _task.start_services
+command: create_all: {
+	create_networks: _task.create_networks
+	create_volumes:  _task.create_volumes & {
+		in_deps: create_networks.out_deps
+	}
+	create_images: _task.create_images & {
+		in_deps: create_volumes.out_deps
+	}
+}
