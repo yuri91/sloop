@@ -73,18 +73,18 @@ $network: public: {
 $image: miniflux: {
 	from: "docker.io/miniflux/miniflux"
 }
-//$service: feeder: {
-// image: $image.miniflux
-// volumes: {
-//  "/etc/miniflux.db": $volume.miniflux_db
-// }
-// networks: [
-//  $network.public,
-// ]
-// wants: [
-//  "network.target",
-// ]
-//}
+$service: feeder: {
+	image: $image.miniflux
+	volumes: {
+		"/etc/miniflux.db": $volume.miniflux_db
+	}
+	networks: [
+		$network.public,
+	]
+	wants: [
+		"network.target",
+	]
+}
 
 #busybox_image: #Image & {
 	from: "docker.io/busybox:latest"
