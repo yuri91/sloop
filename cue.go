@@ -1,8 +1,6 @@
 package main
 
 import (
-	"fmt"
-
 	"cuelang.org/go/cue"
 	"cuelang.org/go/cue/cuecontext"
 //	"cuelang.org/go/cue/format"
@@ -16,7 +14,7 @@ type cueError struct {
 func (e cueError) Error() string {
 	return e.msg + ": " + e.err.Error()
 }
-func wrapError(err error, msg string) (Config, cueError) {
+func wrapCueError(err error, msg string) (Config, cueError) {
 	return Config{}, cueError{err, msg}
 }
 
@@ -98,7 +96,7 @@ const goTypesStr = `
 		for p,f in files {
 			"\(p)": {
 				content: string & (f.content | f)
-				permissions: uint16 & (f.permissions | *0x666)
+				permissions: uint16 & (f.permissions | *0o666)
 			}
 		}
 	}
@@ -122,8 +120,11 @@ const goTypesStr = `
 		}
 	]
 	$volumes: [
-		for v in volumes {
-			v.name
+		for p,v in volumes {
+			{
+				name: v.name
+				dest: p
+			}
 		}
 	]
 	$networks: [
@@ -148,7 +149,7 @@ $services: {
 }
 `
 
-func build(path string) (Config, error) {
+func getConfig(path string) (Config, error) {
 	// We need a cue.Context, the New'd return is ready to use
 	ctx := cuecontext.New()
 
@@ -164,30 +165,30 @@ func build(path string) (Config, error) {
 	// check for errors on the instance
 	// these are typically parsing errors
 	if bi.Err != nil {
-		return wrapError(bi.Err, "Error during load")
+		return wrapCueError(bi.Err, "Error during load")
 	}
 
 	// Use cue.Context to turn build.Instance to cue.Instance
 	value := ctx.BuildInstance(bi, cue.Scope(types))
 	if value.Err() != nil {
-		return wrapError(value.Err(), "Error during build")
+		return wrapCueError(value.Err(), "Error during build")
 	}
 
 	value = value.Unify(constraints)
 	if value.Err() != nil {
-		return wrapError(value.Err(), "Error during constraints check")
+		return wrapCueError(value.Err(), "Error during constraints check")
 	}
 
 	scope := value.Unify(types)
 	value = ctx.CompileString(goTypesStr, cue.Filename("sloop_go_types.cue"), cue.Scope(scope))
 	if value.Err() != nil {
-		return wrapError(value.Err(), "Error during go type conversion")
+		return wrapCueError(value.Err(), "Error during go type conversion")
 	}
 
 	// Validate the value
 	err := value.Validate(cue.Concrete(true), cue.ResolveReferences(true))
 	if err != nil {
-		return wrapError(err, "Error during validate")
+		return wrapCueError(err, "Error during validate")
 	}
 
 	//syn := value.Syntax(
@@ -203,7 +204,7 @@ func build(path string) (Config, error) {
 	conf := Config{}
 	err = value.Decode(&conf)
 	if err != nil {
-		return wrapError(err, "Error during decoding to go type")
+		return wrapCueError(err, "Error during decoding to go type")
 	}
 	return conf,nil
 }

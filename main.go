@@ -6,10 +6,15 @@ import (
 )
 
 func main() {
-	conf, err := build(os.Args[1])
+	conf, err := getConfig(os.Args[1])
 	if err != nil {
 		fmt.Println("Error: ", err)
 		return;
 	}
 	fmt.Println(conf);
+	err = run(conf);
+	if err != nil {
+		fmt.Println("Error: ", err)
+		return;
+	}
 }
