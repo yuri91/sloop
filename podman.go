@@ -11,7 +11,6 @@ import (
 	"time"
 
 	"github.com/containers/buildah/define"
-	"github.com/containers/common/libnetwork/types"
 	"github.com/containers/podman/v4/pkg/bindings"
 	"github.com/containers/podman/v4/pkg/bindings/generate"
 	"github.com/containers/podman/v4/pkg/specgen"
@@ -136,24 +135,54 @@ func getPortMappings(s Service) []nettypes.PortMapping {
 func  run(config Config) error {
 	conn, err := bindings.NewConnection(context.Background(), "unix://run/podman/podman.sock")
 	if err != nil {
-		fmt.Println(err)
-		os.Exit(1)
+		return wrapPodmanError(err, "Error when connecting to podman socket")
 	}
 
 	for _, v := range config.Volumes {
-		_, err = volumes.Create(conn, entities.VolumeCreateOptions {
-			Name: v.Name,
-		}, nil)
+		if v.Name[0] == '/' {
+			continue;
+		}
+		list, err := volumes.List(conn, &volumes.ListOptions {
+			Filters: map[string][]string{
+				"label": {fmt.Sprintf("sloop_volume=%s", v.Name)},
+			},
+		})
 		if err != nil {
-			return wrapPodmanError(err, "Error when creating volume")
+			return wrapPodmanError(err, "Error when listing volumes")
+		}
+		if len(list) > 1 {
+			return fmt.Errorf("Too many volumes matching filter")
+		}
+		if len(list) == 0 {
+			_, err = volumes.Create(conn, entities.VolumeCreateOptions {
+				Name: v.Name,
+				Labels: map[string]string{"sloop_volume": v.Name},
+			}, nil)
+			if err != nil {
+				return wrapPodmanError(err, "Error when creating volume")
+			}
 		}
 	}
 	for _, v := range config.Networks {
-		_, err = network.Create(conn, &types.Network {
-			Name: v.Name,
+		list, err := network.List(conn, &network.ListOptions {
+			Filters: map[string][]string{
+				"label": {fmt.Sprintf("sloop_network=%s", v.Name)},
+			},
 		})
 		if err != nil {
-			return wrapPodmanError(err, "Error when creating volume")
+			return wrapPodmanError(err, "Error when listing networks")
+		}
+		if len(list) > 1 {
+			return fmt.Errorf("Too many networks matching filter")
+		}
+		if len(list) == 0 {
+			_, err = network.Create(conn, &nettypes.Network {
+				Name: v.Name,
+				Labels: map[string]string{"sloop_network": v.Name},
+			})
+			if err != nil {
+				return wrapPodmanError(err, "Error when creating network")
+			}
 		}
 	}
 	containerTemplate := template.Must(template.New("containerfile").Funcs(template.FuncMap{"StringsJoin": stringsJoin, "ConvPath":convPath, "Octal": octal}).Parse(containerTemplateStr))
@@ -210,9 +239,9 @@ func  run(config Config) error {
 		if err != nil {
 			return wrapPodmanError(err, "Error when generating service")
 		}
-		fmt.Println(report.Units)
+		//fmt.Println(report.Units)
 		services[n] = report.Units[n]
-		fmt.Println(services[n])
+		//fmt.Println(services[n])
 	}
 	//TODO systemd stop
 	for _, c := range oldContainers {

@@ -137,6 +137,8 @@ const goTypesStr = `
 	$after: [ for a in after {(a & string) | (a.name + ".service")}]
 }
 
+$volumes: $volume
+$networks: $network
 $images: {
 	for k, v in $image {
 		"\(k)": v&#GoImage

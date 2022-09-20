@@ -38,8 +38,8 @@ type Service struct {
 	After []string `json:"$after"`
 }
 type Config struct {
-	Volumes map[string]Volume `json:"$volume"`
-	Networks map[string]Network `json:"$network"`
+	Volumes map[string]Volume `json:"$volumes"`
+	Networks map[string]Network `json:"$networks"`
 	Images map[string]Image `json:"$images"`
 	Services map[string]Service `json:"$services"`
 }
