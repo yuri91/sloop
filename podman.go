@@ -14,6 +14,7 @@ import (
 	"github.com/containers/podman/v4/pkg/bindings"
 	"github.com/containers/podman/v4/pkg/bindings/generate"
 	"github.com/containers/podman/v4/pkg/specgen"
+	spec "github.com/opencontainers/runtime-spec/specs-go"
 
 	nettypes "github.com/containers/common/libnetwork/types"
 	"github.com/containers/podman/v4/pkg/bindings/containers"
@@ -107,13 +108,31 @@ func buildImage(conn context.Context, i Image, containerTemplate *template.Templ
 	return report, nil
 }
 func getVolumes(s Service) []*specgen.NamedVolume {
-	ret := make([]*specgen.NamedVolume, len(s.Volumes))
-	for i, v := range s.Volumes {
+	var ret []*specgen.NamedVolume
+	for _, v := range s.Volumes {
+		if v.Name[0] == '/' {
+			continue
+		}
 		vol := specgen.NamedVolume {
 			Name: v.Name,
 			Dest: v.Dest,
 		}
-		ret[i] = &vol
+		ret = append(ret, &vol)
+	}
+	return ret
+}
+func getMounts(s Service) []spec.Mount {
+	var ret []spec.Mount
+	for _, v := range s.Volumes {
+		if v.Name[0] != '/' {
+			continue
+		}
+		mount := spec.Mount {
+			Source: v.Name,
+			Destination: v.Dest,
+			Type: "bind",
+		}
+		ret = append(ret, mount)
 	}
 	return ret
 }
@@ -201,7 +220,9 @@ func  run(config Config) error {
 
 	var oldContainers []string
 	for n, _ := range config.Services {
+		true_ := true
 		list, err := containers.List(conn, &containers.ListOptions {
+			All: &true_,
 			Filters: map[string][]string{
 				"label": {fmt.Sprintf("sloop_service=%s", n)},
 			},
@@ -217,6 +238,7 @@ func  run(config Config) error {
 	for n, s := range config.Services {
 		spec := specgen.NewSpecGenerator(builds[s.Image], false)
 		spec.Volumes = getVolumes(s)
+		spec.Mounts = getMounts(s)
 		spec.Networks = getNetworks(s)
 		spec.PortMappings = getPortMappings(s)
 		spec.Labels = map[string]string{"sloop_service": n}
