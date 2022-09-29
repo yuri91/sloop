@@ -3,8 +3,10 @@ package main
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"io/fs"
+	"io/ioutil"
 	"os"
 	"strings"
 	"text/template"
@@ -22,6 +24,8 @@ import (
 	"github.com/containers/podman/v4/pkg/bindings/network"
 	"github.com/containers/podman/v4/pkg/bindings/volumes"
 	"github.com/containers/podman/v4/pkg/domain/entities"
+
+	"github.com/coreos/go-systemd/v22/dbus"
 )
 
 type podmanError struct {
@@ -34,6 +38,8 @@ func (e podmanError) Error() string {
 func wrapPodmanError(err error, msg string) podmanError {
 	return podmanError{err, msg}
 }
+
+const systemdDir = "/etc/systemd/system/"
 
 const containerTemplateStr = `
 FROM {{ .From }}
@@ -261,10 +267,44 @@ func  run(config Config) error {
 		if err != nil {
 			return wrapPodmanError(err, "Error when generating service")
 		}
-		//fmt.Println(report.Units)
-		services[n] = report.Units[n]
-		//fmt.Println(services[n])
+		services[n] = "# sloop_service\n" + report.Units[n]
 	}
+	oldservices := make(map[string]string)
+	files, err := ioutil.ReadDir(systemdDir)
+	if err != nil {
+		return wrapPodmanError(err, "Error when listing systemd unit directory")
+	}
+	for _, f := range files {
+		if strings.HasSuffix(f.Name(), ".service") {
+			n := strings.TrimSuffix(f.Name(), ".service")
+			contentB, err := os.ReadFile(systemdDir + f.Name())
+			content := string(contentB)
+			if err != nil {
+				return wrapPodmanError(err, "Error when reading systemd unit file")
+			}
+			if strings.HasPrefix(content, "# sloop_service\n") {
+				oldservices[n] = content
+			}
+		}
+	}
+	systemd, err := dbus.NewSystemConnectionContext(context.Background());
+	if err != nil {
+		return wrapPodmanError(err, "Error when connecting to systemd")
+	}
+	for olds, oldc := range oldservices {
+		if services[olds] == oldc {
+			continue
+		}
+		// STOP unit
+		wait := make(chan string)
+		systemd.StopUnitContext(context.Background(), olds, "replace", wait)
+		res := <- wait
+		if res != "done" {
+			return errors.New("Error when stopping unit")
+		}
+	}
+	// Place units, start units
+
 	//TODO systemd stop
 	for _, c := range oldContainers {
 		_, err = containers.Remove(conn, c, nil)
