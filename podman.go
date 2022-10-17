@@ -177,17 +177,8 @@ func matchSpec(conn context.Context, id string, spec specgen.SpecGenerator) (boo
 	return reflect.DeepEqual(origSpec, spec), nil
 }
 
-func run(config Config) error {
-	pwd, err := os.Getwd()
-	if err != nil {
-		return wrapPodmanError(err, "Error when getting pwd")
-	}
-	conn, err := bindings.NewConnection(context.Background(), "unix://run/podman/podman.sock")
-	if err != nil {
-		return wrapPodmanError(err, "Error when connecting to podman socket")
-	}
-
-	for _, v := range config.Volumes {
+func createVolumes(conn context.Context, vols map[string]Volume) error {
+	for _, v := range vols {
 		if v.Name[0] == '/' {
 			continue
 		}
@@ -212,7 +203,11 @@ func run(config Config) error {
 			}
 		}
 	}
-	for _, v := range config.Networks {
+	return nil
+}
+
+func createNetworks(conn context.Context, nets map[string]Network) error {
+	for _, v := range nets {
 		list, err := network.List(conn, &network.ListOptions {
 			Filters: map[string][]string{
 				"label": {fmt.Sprintf("sloop_network=%s", v.Name)},
@@ -234,22 +229,26 @@ func run(config Config) error {
 			}
 		}
 	}
+	return nil
+}
+
+func createImages(conn context.Context, imgs map[string]Image) (map[string]string, error) {
 	containerTemplate := template.Must(template.New("containerfile").Funcs(template.FuncMap{"StringsJoin": stringsJoin, "ConvPath":convPath, "Octal": octal}).Parse(containerTemplateStr))
-	if err != nil {
-		return wrapPodmanError(err, "Error when creating Containerfile template")
-	}
 
 	builds := make(map[string]string)
-	for n, i := range config.Images {
+	for n, i := range imgs {
 		id, err := buildImage(conn, i, containerTemplate)
 		if err != nil {
-			return err
+			return nil, err
 		}
 		builds[n] = id.ID
 	}
+	return builds, nil
+}
 
+func findAllContainers(conn context.Context, services map[string]Service) (map[string]string, error) {
 	oldContainers := make(map[string]string)
-	for n, _ := range config.Services {
+	for n := range services {
 		true_ := true
 		list, err := containers.List(conn, &containers.ListOptions {
 			All: &true_,
@@ -258,18 +257,22 @@ func run(config Config) error {
 			},
 		})
 		if err != nil {
-			return wrapPodmanError(err, "Error when listing existing containers")
+			return nil, wrapPodmanError(err, "Error when listing existing containers")
 		}
 		if len(list) > 1 {
-			return fmt.Errorf("Multiple existing containers for one name")
+			return nil, fmt.Errorf("Multiple existing containers for one name")
 		}
 		if len(list) == 1 {
 			oldContainers[n] = list[0].ID
 		}
 	}
-	services := make(map[string]string)
-	for n, s := range config.Services {
-		spec := specgen.NewSpecGenerator(builds[s.Image], false)
+	return oldContainers, nil
+}
+
+func createContainers(conn context.Context, services map[string]Service, images map[string]string, oldContainers map[string]string) (map[string]string, error) {
+	newContainers := make(map[string]string)
+	for n, s := range services {
+		spec := specgen.NewSpecGenerator(images[s.Image], false)
 		spec.Volumes = getVolumes(s)
 		spec.Mounts = getMounts(s)
 		spec.Networks = getNetworks(s)
@@ -277,10 +280,11 @@ func run(config Config) error {
 		spec.Labels = map[string]string{"sloop_service": n}
 		exists := false
 		if oldc, ok := oldContainers[n]; ok {
+			var err error
 			exists, err = matchSpec(conn, oldc, *spec)
-		}
-		if err != nil {
-			return err
+			if err != nil {
+				return nil, err
+			}
 		}
 		var id string
 		if exists {
@@ -289,18 +293,27 @@ func run(config Config) error {
 		} else {
 			specBytes, err := json.Marshal(*spec)
 			if err != nil {
-				return wrapPodmanError(err, "Error when marshaling spec")
+				return nil, wrapPodmanError(err, "Error when marshaling spec")
 			}
 			spec.Annotations = map[string]string{"sloop_config": string(specBytes)}
 			id_, err := containers.CreateWithSpec(conn, spec, &containers.CreateOptions {
 			})
 			if err != nil {
-				return wrapPodmanError(err, "Error when creating creating container")
+				return nil, wrapPodmanError(err, "Error when creating creating container")
 			}
 			id = id_.ID
 		}
+		newContainers[n] = id
+	}
+	return newContainers, nil
+}
+
+func createServices(conn context.Context, services map[string]Service, containers map[string]string) (map[string]string, error) {
+	newServices := make(map[string]string)
+	for n, s := range services {
 		true_ := true
 		empty := ""
+		id := containers[n]
 		report, err := generate.Systemd(conn, id, &generate.SystemdOptions {
 			NoHeader: &true_,
 			ContainerPrefix: &empty,
@@ -311,19 +324,22 @@ func run(config Config) error {
 			After: &s.After,
 		})
 		if err != nil {
-			return wrapPodmanError(err, "Error when generating service")
+			return nil, wrapPodmanError(err, "Error when generating service")
 		}
-		services[n] = "# sloop_service\n" + report.Units[id]
+		newServices[n] = "# sloop_service\n" + report.Units[id]
 	}
-	oldservices := make(map[string]string)
-	fullUnitsDir := pwd + "/" + unitsDir
-	err = os.MkdirAll(fullUnitsDir, os.ModePerm)
+	return newServices, nil
+}
+
+func findExistingServices(fullUnitsDir string) (map[string]string, error) {
+	services := make(map[string]string)
+	err := os.MkdirAll(fullUnitsDir, os.ModePerm)
 	if err != nil {
-		return wrapPodmanError(err, "Error when creating systemd unit files directory")
+		return nil, wrapPodmanError(err, "Error when creating systemd unit files directory")
 	}
 	files, err := ioutil.ReadDir(fullUnitsDir)
 	if err != nil {
-		return wrapPodmanError(err, "Error when listing systemd unit directory")
+		return nil, wrapPodmanError(err, "Error when listing systemd unit directory")
 	}
 	for _, f := range files {
 		if strings.HasSuffix(f.Name(), ".service") {
@@ -331,21 +347,28 @@ func run(config Config) error {
 			contentB, err := os.ReadFile(fullUnitsDir + f.Name())
 			content := string(contentB)
 			if err != nil {
-				return wrapPodmanError(err, "Error when reading systemd unit file")
+				return nil, wrapPodmanError(err, "Error when reading systemd unit file")
 			}
 			if strings.HasPrefix(content, "# sloop_service\n") {
-				oldservices[n] = content
+				services[n] = content
 			}
 		}
 	}
-	systemd, err := dbus.NewSystemConnectionContext(context.Background())
-	if err != nil {
-		return wrapPodmanError(err, "Error when connecting to systemd")
-	}
-	for olds, oldc := range oldservices {
-		if services[olds] == oldc {
-			continue
+	return services, nil
+}
+
+func dedupNewOldServices(oldServices map[string]string, newServices map[string]string) {
+	for s, oldc := range oldServices {
+		if newServices[s] == oldc {
+			delete(oldServices, s)
+			delete(newServices, s)
 		}
+	}
+}
+
+
+func deleteOldServices(systemd *dbus.Conn, oldServices map[string]string) error {
+	for olds := range oldServices {
 		statuses, err := systemd.ListUnitsByNamesContext(context.Background(), []string{olds + ".service"})
 		if err != nil {
 			return wrapPodmanError(err, "Error when listing unit")
@@ -372,19 +395,23 @@ func run(config Config) error {
 		// Remove unit file
 		os.Remove(olds + ".service")
 	}
+	return nil
+}
+func deleteOldContainers(conn context.Context, oldContainers map[string]string) error {
 	for _, c := range oldContainers {
-		_, err = containers.Remove(conn, c, nil)
+		_, err := containers.Remove(conn, c, nil)
 		if err != nil {
 			return wrapPodmanError(err, "Error when removing container")
 		}
 	}
-	for name, content := range services {
-		if oldservices[name] == content {
-			continue
-		}
+	return nil
+}
+
+func startServices(systemd *dbus.Conn, fullUnitsDir string, newServices map[string]string) error {
+	for name, content := range newServices {
 		fullPath := fullUnitsDir + name+".service"
 		//create service file
-		err = os.WriteFile(fullPath, []byte(content), 0o655)
+		err := os.WriteFile(fullPath, []byte(content), 0o655)
 		if err != nil {
 			return wrapPodmanError(err, "Error when writing service file")
 		}
@@ -404,6 +431,65 @@ func run(config Config) error {
 			return errors.New("Error when starting unit")
 		}
 		fmt.Printf("done\n")
+	}
+	return nil
+}
+
+func run(config Config) error {
+	pwd, err := os.Getwd()
+	if err != nil {
+		return wrapPodmanError(err, "Error when getting pwd")
+	}
+	conn, err := bindings.NewConnection(context.Background(), "unix://run/podman/podman.sock")
+	if err != nil {
+		return wrapPodmanError(err, "Error when connecting to podman socket")
+	}
+	systemd, err := dbus.NewSystemConnectionContext(context.Background())
+	if err != nil {
+		return wrapPodmanError(err, "Error when connecting to systemd")
+	}
+
+	err = createVolumes(conn, config.Volumes)
+	if err != nil {
+		return err
+	}
+	err = createNetworks(conn, config.Networks)
+	if err != nil {
+		return err
+	}
+	builds, err := createImages(conn, config.Images)
+	if err != nil {
+		return err
+	}
+	oldContainers, err := findAllContainers(conn, config.Services)
+	if err != nil {
+		return err
+	}
+	newContainers, err := createContainers(conn, config.Services, builds, oldContainers)
+	if err != nil {
+		return err
+	}
+	newServices, err := createServices(conn, config.Services, newContainers)
+	if err != nil {
+		return err
+	}
+	fullUnitsDir := pwd + "/" + unitsDir
+	oldServices, err := findExistingServices(fullUnitsDir)
+	if err != nil {
+		return err
+	}
+	dedupNewOldServices(newServices, oldServices)
+	err = deleteOldServices(systemd, oldServices)
+	if err != nil {
+		return err
+	}
+	err = deleteOldContainers(conn, oldContainers)
+	if err != nil {
+		return err
+	}
+	err = startServices(systemd, fullUnitsDir, newServices)
+	if err != nil {
+		return err
 	}
 
 	return nil
