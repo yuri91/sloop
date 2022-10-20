@@ -9,7 +9,6 @@ import (
 	"io/fs"
 	"io/ioutil"
 	"os"
-	"reflect"
 	"strings"
 	"text/template"
 	"time"
@@ -168,13 +167,12 @@ func matchSpec(conn context.Context, id string, spec specgen.SpecGenerator) (boo
 		return false, wrapPodmanError(err, "Error while inspecting container")
 	}
 	origSpecStr := data.Config.Annotations["sloop_config"]
-	var origSpec specgen.SpecGenerator
-	err = json.Unmarshal([]byte(origSpecStr), &origSpec)
+	specBytes, err := json.Marshal(spec)
 	if err != nil {
-		return false, wrapPodmanError(err, "Error while unmarshaling spec")
+		return false, wrapPodmanError(err, "Error when marshaling spec")
 	}
-	delete(origSpec.Annotations,"sloop_config")
-	return reflect.DeepEqual(origSpec, spec), nil
+	specStr := string(specBytes)
+	return specStr == origSpecStr, nil
 }
 
 func createVolumes(conn context.Context, vols map[string]Volume) error {
@@ -478,7 +476,7 @@ func run(config Config) error {
 	if err != nil {
 		return err
 	}
-	dedupNewOldServices(newServices, oldServices)
+	dedupNewOldServices(oldServices, newServices)
 	err = deleteOldServices(systemd, oldServices)
 	if err != nil {
 		return err
