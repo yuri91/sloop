@@ -8,6 +8,7 @@ require (
 	github.com/containers/common v0.49.1
 	github.com/containers/podman/v4 v4.2.0
 	github.com/coreos/go-systemd/v22 v22.3.2
+	github.com/kr/pretty v0.2.1
 	github.com/opencontainers/runtime-spec v1.0.3-0.20211214071223-8958f93039ab
 )
 
@@ -61,6 +62,7 @@ require (
 	github.com/json-iterator/go v1.1.12 // indirect
 	github.com/klauspost/compress v1.15.9 // indirect
 	github.com/klauspost/pgzip v1.2.5 // indirect
+	github.com/kr/text v0.2.0 // indirect
 	github.com/letsencrypt/boulder v0.0.0-20220331220046-b23ab962616e // indirect
 	github.com/manifoldco/promptui v0.9.0 // indirect
 	github.com/mattn/go-runewidth v0.0.13 // indirect

@@ -1,17 +1,25 @@
 package main
 
 import (
-	"os"
+	"flag"
 	"fmt"
+	"os"
+	"github.com/kr/pretty"
 )
 
 func main() {
-	conf, err := getConfig(os.Args[1])
+	f := flag.NewFlagSet(os.Args[0], flag.ExitOnError)
+	check := f.Bool("check", false, "just check the configuration")
+	f.Parse(os.Args[1:])
+	conf, err := getConfig(flag.Arg(0))
 	if err != nil {
 		fmt.Println("Error: ", err)
 		return;
 	}
-	fmt.Println(conf);
+	if *check {
+		fmt.Printf("%# v\n", pretty.Formatter(conf));
+		return;
+	}
 	err = run(conf);
 	if err != nil {
 		fmt.Println("Error: ", err)
