@@ -10,6 +10,7 @@ require (
 	github.com/coreos/go-systemd/v22 v22.3.2
 	github.com/kr/pretty v0.2.1
 	github.com/opencontainers/runtime-spec v1.0.3-0.20211214071223-8958f93039ab
+	github.com/spf13/cobra v1.5.0
 )
 
 require (
@@ -58,6 +59,7 @@ require (
 	github.com/hashicorp/errwrap v1.1.0 // indirect
 	github.com/hashicorp/go-multierror v1.1.1 // indirect
 	github.com/imdario/mergo v0.3.13 // indirect
+	github.com/inconshreveable/mousetrap v1.0.0 // indirect
 	github.com/jinzhu/copier v0.3.5 // indirect
 	github.com/json-iterator/go v1.1.12 // indirect
 	github.com/klauspost/compress v1.15.9 // indirect

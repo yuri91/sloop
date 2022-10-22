@@ -1,4 +1,4 @@
-package main
+package cue
 
 type Volume struct {
 	Name string

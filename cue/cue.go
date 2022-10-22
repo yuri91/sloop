@@ -1,4 +1,4 @@
-package main
+package cue
 
 import (
 	"cuelang.org/go/cue"
@@ -151,7 +151,7 @@ $services: {
 }
 `
 
-func getConfig(path string) (Config, error) {
+func GetConfig(path string) (Config, error) {
 	// We need a cue.Context, the New'd return is ready to use
 	ctx := cuecontext.New()
 

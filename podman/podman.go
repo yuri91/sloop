@@ -1,4 +1,4 @@
-package main
+package podman
 
 import (
 	"bytes"
@@ -27,6 +27,8 @@ import (
 	"github.com/containers/podman/v4/pkg/domain/entities"
 
 	"github.com/coreos/go-systemd/v22/dbus"
+
+	"yuri91/sloop/cue"
 )
 
 type podmanError struct {
@@ -78,7 +80,7 @@ func convPath(p string) string {
 func octal(i uint16) string {
 	return fmt.Sprintf("%o", uint32(i))
 }
-func buildImage(conn context.Context, i Image, containerTemplate *template.Template) (*entities.BuildReport, error) {
+func buildImage(conn context.Context, i cue.Image, containerTemplate *template.Template) (*entities.BuildReport, error) {
 	var buf bytes.Buffer
 	err := containerTemplate.Execute(&buf, i)
 	if err != nil {
@@ -114,7 +116,7 @@ func buildImage(conn context.Context, i Image, containerTemplate *template.Templ
 	// TODO build image
 	return report, nil
 }
-func getVolumes(s Service) []*specgen.NamedVolume {
+func getVolumes(s cue.Service) []*specgen.NamedVolume {
 	var ret []*specgen.NamedVolume
 	for _, v := range s.Volumes {
 		if v.Name[0] == '/' {
@@ -128,7 +130,7 @@ func getVolumes(s Service) []*specgen.NamedVolume {
 	}
 	return ret
 }
-func getMounts(s Service) []spec.Mount {
+func getMounts(s cue.Service) []spec.Mount {
 	var ret []spec.Mount
 	for _, v := range s.Volumes {
 		if v.Name[0] != '/' {
@@ -143,14 +145,14 @@ func getMounts(s Service) []spec.Mount {
 	}
 	return ret
 }
-func getNetworks(s Service) map[string]nettypes.PerNetworkOptions {
+func getNetworks(s cue.Service) map[string]nettypes.PerNetworkOptions {
 	ret := make(map[string]nettypes.PerNetworkOptions, len(s.Networks))
 	for _, n := range s.Networks {
 		ret[n] = nettypes.PerNetworkOptions{}
 	}
 	return ret
 }
-func getPortMappings(s Service) []nettypes.PortMapping {
+func getPortMappings(s cue.Service) []nettypes.PortMapping {
 	ret := make([]nettypes.PortMapping, len(s.Ports))
 	for i, p := range s.Ports {
 		ret[i].ContainerPort = p.Service
@@ -175,7 +177,7 @@ func matchSpec(conn context.Context, id string, spec specgen.SpecGenerator) (boo
 	return specStr == origSpecStr, nil
 }
 
-func createVolumes(conn context.Context, vols map[string]Volume) error {
+func createVolumes(conn context.Context, vols map[string]cue.Volume) error {
 	for _, v := range vols {
 		if v.Name[0] == '/' {
 			continue
@@ -204,7 +206,7 @@ func createVolumes(conn context.Context, vols map[string]Volume) error {
 	return nil
 }
 
-func createNetworks(conn context.Context, nets map[string]Network) error {
+func createNetworks(conn context.Context, nets map[string]cue.Network) error {
 	for _, v := range nets {
 		list, err := network.List(conn, &network.ListOptions {
 			Filters: map[string][]string{
@@ -230,7 +232,7 @@ func createNetworks(conn context.Context, nets map[string]Network) error {
 	return nil
 }
 
-func createImages(conn context.Context, imgs map[string]Image) (map[string]string, error) {
+func createImages(conn context.Context, imgs map[string]cue.Image) (map[string]string, error) {
 	containerTemplate := template.Must(template.New("containerfile").Funcs(template.FuncMap{"StringsJoin": stringsJoin, "ConvPath":convPath, "Octal": octal}).Parse(containerTemplateStr))
 
 	builds := make(map[string]string)
@@ -244,7 +246,7 @@ func createImages(conn context.Context, imgs map[string]Image) (map[string]strin
 	return builds, nil
 }
 
-func findAllContainers(conn context.Context, services map[string]Service) (map[string]string, error) {
+func findAllContainers(conn context.Context, services map[string]cue.Service) (map[string]string, error) {
 	oldContainers := make(map[string]string)
 	for n := range services {
 		true_ := true
@@ -267,7 +269,7 @@ func findAllContainers(conn context.Context, services map[string]Service) (map[s
 	return oldContainers, nil
 }
 
-func createContainers(conn context.Context, services map[string]Service, images map[string]string, oldContainers map[string]string) (map[string]string, error) {
+func createContainers(conn context.Context, services map[string]cue.Service, images map[string]string, oldContainers map[string]string) (map[string]string, error) {
 	newContainers := make(map[string]string)
 	for n, s := range services {
 		spec := specgen.NewSpecGenerator(images[s.Image], false)
@@ -306,7 +308,7 @@ func createContainers(conn context.Context, services map[string]Service, images 
 	return newContainers, nil
 }
 
-func createServices(conn context.Context, services map[string]Service, containers map[string]string) (map[string]string, error) {
+func createServices(conn context.Context, services map[string]cue.Service, containers map[string]string) (map[string]string, error) {
 	newServices := make(map[string]string)
 	for n, s := range services {
 		true_ := true
@@ -433,7 +435,7 @@ func startServices(systemd *dbus.Conn, fullUnitsDir string, newServices map[stri
 	return nil
 }
 
-func run(config Config) error {
+func Execute(config cue.Config) error {
 	pwd, err := os.Getwd()
 	if err != nil {
 		return wrapPodmanError(err, "Error when getting pwd")
