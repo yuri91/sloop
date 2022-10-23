@@ -23,4 +23,5 @@ func init() {
 
 	rootCmd.AddCommand(checkCmd)
 	rootCmd.AddCommand(runCmd)
+	rootCmd.AddCommand(initCmd)
 }
