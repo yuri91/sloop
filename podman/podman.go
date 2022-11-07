@@ -107,6 +107,7 @@ func buildImage(conn context.Context, i cue.Image, containerTemplate *template.T
 		BuildOptions: define.BuildOptions {
 			Timestamp: &time.Time{},
 			Layers: true,
+			Quiet: true,
 		},
 	})
 	if err != nil {
