@@ -1,1 +1,0 @@
-module: "starship.yuri.space"
