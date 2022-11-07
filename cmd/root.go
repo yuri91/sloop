@@ -23,5 +23,6 @@ func init() {
 
 	rootCmd.AddCommand(checkCmd)
 	rootCmd.AddCommand(runCmd)
+	rootCmd.AddCommand(purgeCmd)
 	rootCmd.AddCommand(initCmd)
 }

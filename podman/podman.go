@@ -87,7 +87,6 @@ func buildImage(conn context.Context, i cue.Image, containerTemplate *template.T
 		return nil, wrapPodmanError(err, "Error when executing Containerfile template")
 	}
 	containerStr := buf.String()
-	fmt.Println(containerStr)
 	tmpdir, err := os.MkdirTemp("", "sloop_"+i.Name)
 	if err != nil {
 		return nil, wrapPodmanError(err, "Error in creating temporary directory")
@@ -431,6 +430,40 @@ func startServices(systemd *dbus.Conn, fullUnitsDir string, newServices map[stri
 			return errors.New("Error when starting unit")
 		}
 		fmt.Printf("done\n")
+	}
+	return nil
+}
+
+func Purge(config cue.Config) error {
+	pwd, err := os.Getwd()
+	if err != nil {
+		return wrapPodmanError(err, "Error when getting pwd")
+	}
+	fullUnitsDir := pwd + "/" + unitsDir
+	conn, err := bindings.NewConnection(context.Background(), "unix://run/podman/podman.sock")
+	if err != nil {
+		return wrapPodmanError(err, "Error when connecting to podman socket")
+	}
+	systemd, err := dbus.NewSystemConnectionContext(context.Background())
+	if err != nil {
+		return wrapPodmanError(err, "Error when connecting to systemd")
+	}
+
+	oldContainers, err := findAllContainers(conn, config.Services)
+	if err != nil {
+		return err
+	}
+	oldServices, err := findExistingServices(fullUnitsDir)
+	if err != nil {
+		return err
+	}
+	err = deleteOldServices(systemd, oldServices)
+	if err != nil {
+		return err
+	}
+	err = deleteOldContainers(conn, oldContainers)
+	if err != nil {
+		return err
 	}
 	return nil
 }
