@@ -3,8 +3,7 @@ package cmd
 import (
 	"github.com/spf13/cobra"
 
-	"yuri91/sloop/cue"
-	"yuri91/sloop/podman"
+	"yuri91/sloop/systemd"
 )
 
 var (
@@ -22,11 +21,7 @@ func init() {
 }
 
 func purge() error {
-	config, err := cue.GetConfig(".")
-	if err != nil {
-		return err
-	}
-	err = podman.Purge(config);
+	err := systemd.Purge();
 	if err != nil {
 		return err
 	}
