@@ -1,7 +1,6 @@
 package cmd
 
 import (
-	"os"
 	"fmt"
 
 	"github.com/spf13/cobra"
@@ -25,10 +24,6 @@ func init() {
 }
 
 func check() error {
-	err := os.Chdir(confDir)
-	if err != nil {
-		return err
-	}
 	config, err := cue.GetConfig(".")
 	if err != nil {
 		return err

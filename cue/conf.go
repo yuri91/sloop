@@ -18,10 +18,7 @@ type Image struct {
 	Name string
 	From string
 	Files map[string]File `json:"$files"`
-	Labels map[string]string
 	Env map[string]string
-	Entrypoint []string
-	Cmd []string
 }
 type VolumeMapping struct {
 	Name string
@@ -29,6 +26,7 @@ type VolumeMapping struct {
 }
 type Service struct {
 	Name  string
+	Cmd []string
 	Image string `json:"$image"`
 	Volumes []VolumeMapping `json:"$volumes"`
 	Ports []PortBinding `json:"$ports"`

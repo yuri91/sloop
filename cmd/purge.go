@@ -1,8 +1,6 @@
 package cmd
 
 import (
-	"os"
-
 	"github.com/spf13/cobra"
 
 	"yuri91/sloop/cue"
@@ -24,10 +22,6 @@ func init() {
 }
 
 func purge() error {
-	err := os.Chdir(confDir)
-	if err != nil {
-		return err
-	}
 	config, err := cue.GetConfig(".")
 	if err != nil {
 		return err

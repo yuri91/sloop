@@ -1,12 +1,11 @@
 package cmd
 
 import (
-	"os"
-
 	"github.com/spf13/cobra"
 
 	"yuri91/sloop/cue"
-	"yuri91/sloop/podman"
+	//	"yuri91/sloop/podman"
+	"yuri91/sloop/systemd"
 )
 
 var (
@@ -24,15 +23,12 @@ func init() {
 }
 
 func run() error {
-	err := os.Chdir(confDir)
-	if err != nil {
-		return err
-	}
 	config, err := cue.GetConfig(".")
 	if err != nil {
 		return err
 	}
-	err = podman.Execute(config);
+	//err = podman.Execute(config);
+	err = systemd.Create(config)
 	if err != nil {
 		return err
 	}

@@ -1,6 +1,11 @@
 package cmd
 
 import (
+	"fmt"
+	"os"
+	"path/filepath"
+	"yuri91/sloop/common"
+
 	"github.com/spf13/cobra"
 )
 
@@ -11,18 +16,38 @@ var (
 		Use:   "sloop",
 		Short: "A container generator and configurator",
 		Long: `Sloop generate images and containers, and systemd services for running them through podman`,
+		SilenceUsage: true,
+		SilenceErrors: true,
 	}
 )
 
-func Execute() error {
-	return rootCmd.Execute()
+func Execute() {
+	if err := rootCmd.Execute(); err != nil {
+		fmt.Printf("Error: %+v", err)
+		os.Exit(1)
+	}
 }
 
 func init() {
+	cobra.OnInitialize(initConfig)
+
 	rootCmd.PersistentFlags().StringVar(&confDir, "conf", ".", "configuration root directory")
 
 	rootCmd.AddCommand(checkCmd)
 	rootCmd.AddCommand(runCmd)
 	rootCmd.AddCommand(purgeCmd)
 	rootCmd.AddCommand(initCmd)
+	rootCmd.AddCommand(fetchCmd)
+}
+
+func initConfig() {
+	confDir, err := filepath.Abs(confDir)
+	if err != nil {
+		cobra.CheckErr(err)
+	}
+	common.SetPaths(confDir)
+	err = os.Chdir(confDir)
+	if err != nil {
+		cobra.CheckErr(err)
+	}
 }

@@ -39,15 +39,13 @@ const typesStr = `
 	name: string
 	from: string
 	files: [string]:  #File
-	labels: [string]: string
 	env: [string]:    string
-	entrypoint: [...string]
-	cmd: [...string]
 	#mounts: [string]: string
 	...
 }
 #Service: {
 	name:  string
+	cmd: [...string]
 	image: #Image
 	volumes: [string]: #Volume
 	ports: [...#PortBinding]
