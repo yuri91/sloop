@@ -22,9 +22,23 @@ const typesStr = `
 #Volume: {
 	name: string
 }
-#Network: {
+#Bridge: {
 	name: string
+	ip: string
 }
+#Netdev: {
+	name: string
+	type: "veth"
+	bridge: #Bridge
+	ip: string
+	...
+}
+#Host: {
+	name: string
+	netdevs: [Name=_]: #Netdev & {name: string | *Name}
+	...
+}
+
 #File: {
 	content:     string
 	permissions: uint16
@@ -49,7 +63,7 @@ const typesStr = `
 	image: #Image
 	volumes: [string]: #Volume
 	ports: [...#PortBinding]
-	networks: [...#Network]
+	host: #Host
 	wants: [...#Dependency]
 	requires: [...#Dependency]
 	after: [...#Dependency]
@@ -62,7 +76,9 @@ const typesStr = `
 const constraintsStr = `
 $volume: [Name=_]: #Volume & {name: string | *Name}
 
-$network: [Name=_]: #Network & {name: string | *Name}
+$bridge: [Name=_]: #Bridge & {name: string | *Name}
+
+$host: [Name=_]: #Host & {name: string | *Name}
 
 $image: [Name=_]: #Image & {name: string | *Name}
 
@@ -73,10 +89,8 @@ $service: [Name=_]: S=#Service & {
 			"\(v.name).is_in_$volume": [ for k1, v1 in $volume if v1.name == v.name {v1}] & [v]
 		}
 	}
-	_networkCheck: {
-		for n in S.networks {
-			"\(n.name).is_in_$network": [ for k, v in $network if v.name == n.name {v}] & [n]
-		}
+	_hostCheck: {
+		"\(S.host.name).is_in_host": [ for k, v in $host if v.name == S.host.name {v}] & [S.host]
 	}
 	_mountCheck: [
 		for k, v in S.image.#mounts {
@@ -102,7 +116,7 @@ const goTypesStr = `
 #GoService: #Service & {
 	image: #Image
 	volumes: [string]: #Volume
-	networks: [...#Network]
+	host: #Host
 	ports: [...#PortBinding]
 	wants: [...#Dependency]
 	requires: [...#Dependency]
@@ -125,18 +139,27 @@ const goTypesStr = `
 			}
 		}
 	]
-	$networks: [
-		for n in networks {
-			n.name
-		}
-	]
+	$host: host.name
 	$wants: [ for w in wants {(w & string) | (w.name + ".service")}]
 	$requires: [ for r in requires {(r & string) | (r.name + ".service")}]
 	$after: [ for a in after {(a & string) | (a.name + ".service")}]
 }
+#GoNetdev: #Netdev & {
+	bridge: #Bridge
+	$bridge: bridge.name
+}
+#GoHost: #Host & {
+	netdevs: [string]: #Netdev
+	$netdevs: [ for k, v in netdevs {v & #GoNetdev}]
+}
 
 $volumes: $volume
-$networks: $network
+$bridges: $bridge
+$hosts: {
+	for k, v in $host {
+		"\(k)": v&#GoHost
+	}
+}
 $images: {
 	for k, v in $image {
 		"\(k)": v&#GoImage

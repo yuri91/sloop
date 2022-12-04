@@ -3,8 +3,18 @@ package cue
 type Volume struct {
 	Name string
 }
-type Network struct {
+type Bridge struct {
 	Name string
+	Ip string
+}
+type Netdev struct {
+	Name string
+	Ip string
+	Bridge string `json:"$bridge"`
+}
+type Host struct {
+	Name string
+	Netdevs []Netdev `json:"$netdevs"`
 }
 type File struct {
 	Content string
@@ -30,14 +40,15 @@ type Service struct {
 	Image string `json:"$image"`
 	Volumes []VolumeMapping `json:"$volumes"`
 	Ports []PortBinding `json:"$ports"`
-	Networks []string `json:"$networks"`
+	Host string `json:"$host"`
 	Wants []string `json:"$wants"`
 	Requires []string `json:"$requires"`
 	After []string `json:"$after"`
 }
 type Config struct {
 	Volumes map[string]Volume `json:"$volumes"`
-	Networks map[string]Network `json:"$networks"`
+	Bridges map[string]Bridge `json:"$bridges"`
+	Hosts map[string]Host `json:"$hosts"`
 	Images map[string]Image `json:"$images"`
 	Services map[string]Service `json:"$services"`
 }

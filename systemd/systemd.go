@@ -91,6 +91,19 @@ func handleImage(i cue.Image) (bool, error) {
 const unitTemplateStr = `
 [Unit]
 Description= Sloop service {{.Name}}
+{{ range $u := .Requires}}
+Requires = {{$u}}
+{{end}}
+{{ range $u := .Wants}}
+Wants = {{$u}}
+{{end}}
+{{ range $u := .Requires}}
+Requires = {{$u}}
+{{end}}
+{{ range $u := .After}}
+After = {{$u}}
+{{end}}
+JoinsNamespaceOf = sloop-host-{{.Host}}.service
 
 [Service]
 PrivateNetwork = true
@@ -104,6 +117,7 @@ MountAPIVFS = true
 BindReadOnlyPaths=/dev/log /run/systemd/journal/socket /run/systemd/journal/stdout
 
 RootDirectory = {{.ImageDir}}/rootfs
+ReadOnlyPaths = /
 {{ range $k, $v := .Binds}}
 BindPaths = {{$k}}:{{$v}}
 {{end}}
@@ -114,13 +128,157 @@ ExecStart = {{.Cmd}}
 WantedBy=default.target
 `
 
+const hostTemplateStr = `
+[Unit]
+Description = Sloop network namespace {{.Name}}
+After = network-online.target
+StopWhenUnneeded = yes
+{{ range $n := .Netdevs}}
+After = sloop-bridge-{{$n.Bridge}}.service
+Requires = sloop-bridge-{{$n.Bridge}}.service
+{{end}}
+
+[Service]
+Type = oneshot
+RemainAfterExit = true
+PrivateNetwork = yes
+
+ExecStart = ip netns add sloop-{{.Name}}
+ExecStart = umount /var/run/netns/sloop-{{.Name}}
+ExecStart = mount --bind /proc/self/ns/net /var/run/netns/sloop-{{.Name}}
+
+ExecStart = ip link set lo up
+
+{{ range $n := .Netdevs}}
+ExecStart = nsenter -t 1 -n -- ip link add {{$n.Bridge}}-{{$.Name}}-{{$n.Name}} type veth peer {{$n.Name}} netns sloop-{{$.Name}}
+ExecStart = nsenter -t 1 -n -- ip link set dev {{$n.Bridge}}-{{$.Name}}-{{$n.Name}} master {{$n.Bridge}}
+ExecStart = ip addr
+ExecStart = ip link set {{$n.Name}} up
+ExecStart = ip addr add {{$n.Ip}}/16 dev {{$n.Name}}
+{{end}}
+
+{{ range $n := .Netdevs}}
+ExecStop = ip link delete {{$n.Name}}
+{{end}}
+
+ExecStop = ip netns delete sloop-{{.Name}}
+
+[Install]
+WantedBy=default.target
+`
+
+const bridgeTemplateStr = `
+[Unit]
+Description = Sloop bridge {{.Name}}
+After = network-online.target
+StopWhenUnneeded = yes
+
+[Service]
+Type = oneshot
+RemainAfterExit = true
+
+ExecStart = ip link add {{.Name}} type bridge
+ExecStart = ip link set {{.Name}} up
+ExecStart = ip addr add {{.Ip}}/16 dev {{.Name}}
+ExecStart = iptables -t nat -A POSTROUTING -s {{.Ip}}/16 ! -o {{.Name}} -j MASQUERADE
+
+ExecStart = iptables -t nat -D POSTROUTING -s {{.Ip}}/16 ! -o {{.Name}} -j MASQUERADE
+ExecStop = ip link delete {{.Name}}
+
+[Install]
+WantedBy=default.target
+`
+
 var unitTemplate *template.Template = template.Must(template.New("unit").Funcs(template.FuncMap{}).Parse(unitTemplateStr))
+var hostTemplate *template.Template = template.Must(template.New("host").Funcs(template.FuncMap{}).Parse(hostTemplateStr))
+var bridgeTemplate *template.Template = template.Must(template.New("bridge").Funcs(template.FuncMap{}).Parse(bridgeTemplateStr))
 
 type UnitConf struct {
 	Name string
 	ImageDir string
 	Binds map[string]string
 	Cmd string
+	Host string
+	Wants []string
+	Requires []string
+	After []string
+}
+type NetConf struct {
+	Bridge string
+}
+
+func handleBridge(systemd *dbus.Conn, b cue.Bridge) (bool, error) {
+	var buf bytes.Buffer
+	err := bridgeTemplate.Execute(&buf, b)
+	if err != nil {
+		return false, CreateServiceError.Wrap(err, "failed to execute template for bridge %s", b.Name)
+	}
+	unitStr := buf.String()
+
+	unitName := "sloop-bridge-" + b.Name + ".service"
+	unitP := filepath.Join(common.BridgePath, unitName)
+
+	// If the file is not there, oldUnit will be null
+	oldUnit, _ := os.ReadFile(unitP)
+	if unitStr == string(oldUnit) {
+		return false, nil
+	}
+
+	if len(oldUnit) != 0 {
+		err = stopDisableDeleteUnit(systemd, unitName)
+		if err != nil {
+			return false, err
+		}
+	}
+
+	err = os.WriteFile(unitP, []byte(unitStr), 0644)
+	if err != nil {
+		return false, CreateServiceError.Wrap(err, "failed to write unit file for bridge %s", b.Name)
+	}
+
+	//enable service
+	_, _, err = systemd.EnableUnitFilesContext(context.Background(), []string{unitP}, false, true)
+	if err != nil {
+		return false, RuntimeServiceError.Wrap(err, "cannot enable unit for bridge %s", b.Name)
+	}
+	return true, nil
+}
+
+func handleHost(systemd *dbus.Conn, h cue.Host) (bool, error) {
+	var buf bytes.Buffer
+	err := hostTemplate.Execute(&buf, h)
+	if err != nil {
+		return false, CreateServiceError.Wrap(err, "failed to execute template for host %s", h.Name)
+	}
+	unitStr := buf.String()
+
+	unitName := "sloop-host-" + h.Name + ".service"
+	unitP := filepath.Join(common.BridgePath, unitName)
+
+	// If the file is not there, oldUnit will be null
+	oldUnit, _ := os.ReadFile(unitP)
+	if unitStr == string(oldUnit) {
+		return false, nil
+	}
+
+	if len(oldUnit) != 0 {
+		err = stopDisableDeleteUnit(systemd, unitName)
+		if err != nil {
+			return false, err
+		}
+	}
+
+	err = os.WriteFile(unitP, []byte(unitStr), 0644)
+	if err != nil {
+		return false, CreateServiceError.Wrap(err, "failed to write unit file for host %s", h.Name)
+	}
+
+	//enable service
+	_, _, err = systemd.EnableUnitFilesContext(context.Background(), []string{unitP}, false, true)
+	if err != nil {
+		return false, RuntimeServiceError.Wrap(err, "cannot enable unit for host %s", h.Name)
+	}
+	return true, nil
 }
 
 func handleService(systemd *dbus.Conn, s cue.Service) (bool, error) {
@@ -147,12 +305,18 @@ func handleService(systemd *dbus.Conn, s cue.Service) (bool, error) {
 	for _,c := range cmdVec {
 		cmdStr += fmt.Sprintf("%q ", c)
 	}
+	s.Requires = append(s.Requires, "sloop-host-" + s.Host + ".service")
+	s.After = append(s.After, "sloop-host-" + s.Host + ".service")
 	var buf bytes.Buffer
 	conf := UnitConf {
 		Name: s.Name,
 		ImageDir: imageDir,
 		Binds: bindsMap,
 		Cmd: cmdStr,
+		Host: s.Host,
+		Wants: s.Wants,
+		Requires: s.Requires,
+		After: s.After,
 	}
 	err := unitTemplate.Execute(&buf, conf)
 	if err != nil {
@@ -232,8 +396,41 @@ func Create(config cue.Config) error {
 	if err != nil {
 		return  FilesystemError.Wrap(err, "cannot create units directory") 
 	}
+	os.MkdirAll(common.BridgePath, 0700)
+	if err != nil {
+		return  FilesystemError.Wrap(err, "cannot create bridges directory") 
+	}
+	os.MkdirAll(common.HostPath, 0700)
+	if err != nil {
+		return  FilesystemError.Wrap(err, "cannot create hosts directory") 
+	}
 
 	reload := false
+
+	systemd, err := dbus.NewSystemConnectionContext(context.Background())
+	if err != nil {
+		return  RuntimeServiceError.Wrap(err, "cannot connect to systemd dbus") 
+	}
+
+
+	for _, b := range config.Bridges {
+		changed, err := handleBridge(systemd, b)
+		if err != nil {
+			return err
+		}
+		if changed {
+			reload = true
+		}
+	}
+	for _, h := range config.Hosts {
+		changed, err := handleHost(systemd, h)
+		if err != nil {
+			return err
+		}
+		if changed {
+			reload = true
+		}
+	}
 
 	for _, v := range config.Volumes {
 		err := handleVolume(v)
@@ -262,11 +459,6 @@ func Create(config cue.Config) error {
 		if changed {
 			reload = true
 		}
-	}
-
-	systemd, err := dbus.NewSystemConnectionContext(context.Background())
-	if err != nil {
-		return  RuntimeServiceError.Wrap(err, "cannot connect to systemd dbus") 
 	}
 
 	curUnits, err := os.ReadDir(common.UnitPath)
@@ -323,19 +515,45 @@ func Purge() error {
 	}
 
 	curUnits, err := os.ReadDir(common.UnitPath)
-	if err != nil {
-		return  RemoveUnitError.Wrap(err, "cannot list current units")
-	}
-	for _, cu := range curUnits {
-		err = stopDisableDeleteUnit(systemd, cu.Name())
+	if err == nil {
+		for _, cu := range curUnits {
+			err = stopDisableDeleteUnit(systemd, cu.Name())
+			if err != nil {
+				return err
+			}
+		}
+		err = os.RemoveAll(common.UnitPath)
 		if err != nil {
-			return err
+			return RemoveUnitError.Wrap(err, "cannot remove unit directory")
 		}
 	}
 
-	err = os.RemoveAll(common.UnitPath)
-	if err != nil {
-		return RemoveUnitError.Wrap(err, "cannot remove unit directory")
+	curHosts, err := os.ReadDir(common.HostPath)
+	if err == nil {
+		for _, cu := range curHosts {
+			err = stopDisableDeleteUnit(systemd, cu.Name())
+			if err != nil {
+				return err
+			}
+		}
+		err = os.RemoveAll(common.HostPath)
+		if err != nil {
+			return RemoveUnitError.Wrap(err, "cannot remove host directory")
+		}
+	}
+
+	curBridges, err := os.ReadDir(common.BridgePath)
+	if err == nil {
+		for _, cu := range curBridges {
+			err = stopDisableDeleteUnit(systemd, cu.Name())
+			if err != nil {
+				return err
+			}
+		}
+		err = os.RemoveAll(common.BridgePath)
+		if err != nil {
+			return RemoveUnitError.Wrap(err, "cannot remove bridge directory")
+		}
 	}
 
 	systemd.ReloadContext(context.Background())
