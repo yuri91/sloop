@@ -15,7 +15,7 @@ var (
 	rootCmd = &cobra.Command{
 		Use:   "sloop",
 		Short: "A container generator and configurator",
-		Long: `Sloop generate images and containers, and systemd services for running them through podman`,
+		Long: `Sloop generates systemd units for running docker containers, without docker`,
 		SilenceUsage: true,
 		SilenceErrors: true,
 	}
