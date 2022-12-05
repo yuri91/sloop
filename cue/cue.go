@@ -160,21 +160,29 @@ const goTypesStr = `
 	$netdevs: [ for k, v in netdevs {v & #GoNetdev}]
 }
 
-$volumes: $volume
-$bridges: $bridge
+$volumes: {
+	for _, v in $volume {
+		"\(v.name)": v&#Volume
+	}
+}
+$bridges: {
+	for _, v in $bridge {
+		"\(v.name)": v&#Bridge
+	}
+}
 $hosts: {
-	for k, v in $host {
-		"\(k)": v&#GoHost
+	for _, v in $host {
+		"\(v.name)": v&#GoHost
 	}
 }
 $images: {
-	for k, v in $image {
-		"\(k)": v&#GoImage
+	for _, v in $image {
+		"\(v.name)": v&#GoImage
 	}
 }
 $services: {
-	for k, v in $service {
-		"\(k)": v&#GoService
+	for _, v in $service {
+		"\(v.name)": v&#GoService
 	}
 }
 `
