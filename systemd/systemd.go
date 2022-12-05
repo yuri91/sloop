@@ -103,10 +103,14 @@ Requires = {{$u}}
 {{ range $u := .After}}
 After = {{$u}}
 {{end}}
+{{ if ne .Host "" }}
 JoinsNamespaceOf = sloop-host-{{.Host}}.service
+{{end}}
 
 [Service]
+{{ if ne .Host "" }}
 PrivateNetwork = true
+{{end}}
 PrivateTmp = true
 PrivateDevices = true
 PrivateIPC = true

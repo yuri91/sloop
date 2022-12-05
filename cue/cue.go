@@ -63,7 +63,7 @@ const typesStr = `
 	image: #Image
 	volumes: [string]: #Volume
 	ports: [...#PortBinding]
-	host: #Host
+	host: #Host | *null
 	wants: [...#Dependency]
 	requires: [...#Dependency]
 	after: [...#Dependency]
@@ -90,7 +90,9 @@ $service: [Name=_]: S=#Service & {
 		}
 	}
 	_hostCheck: {
-		"\(S.host.name).is_in_host": [ for k, v in $host if v.name == S.host.name {v}] & [S.host]
+		if S.host != null {
+			"\(S.host.name).is_in_host": [ for k, v in $host if v.name == S.host.name {v}] & [S.host]
+		}
 	}
 	_mountCheck: [
 		for k, v in S.image.#mounts {
@@ -116,7 +118,7 @@ const goTypesStr = `
 #GoService: #Service & {
 	image: #Image
 	volumes: [string]: #Volume
-	host: #Host
+	host: #Host | *null
 	ports: [...#PortBinding]
 	wants: [...#Dependency]
 	requires: [...#Dependency]
@@ -139,7 +141,12 @@ const goTypesStr = `
 			}
 		}
 	]
-	$host: host.name
+	if host != null {
+		$host: host.name
+	}
+	if host == null {
+		$host: ""
+	}
 	$wants: [ for w in wants {(w & string) | (w.name + ".service")}]
 	$requires: [ for r in requires {(r & string) | (r.name + ".service")}]
 	$after: [ for a in after {(a & string) | (a.name + ".service")}]
