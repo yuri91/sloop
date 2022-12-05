@@ -197,6 +197,7 @@ func GetConfig(path string) (Config, error) {
 	// Load Cue files into Cue build.Instances slice
 	// the second arg is a configuration object, we'll see this later
 	bis := load.Instances([]string{path}, &load.Config {
+		Package: "main",
 	})
 	bi := bis[0]
 
