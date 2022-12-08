@@ -91,9 +91,6 @@ func handleImage(i cue.Image) (bool, error) {
 const unitTemplateStr = `
 [Unit]
 Description= Sloop service {{.Name}}
-{{ range $u := .Requires}}
-Requires = {{$u}}
-{{end}}
 {{ range $u := .Wants}}
 Wants = {{$u}}
 {{end}}
