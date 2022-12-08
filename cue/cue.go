@@ -154,6 +154,7 @@ const goTypesStr = `
 #GoNetdev: #Netdev & {
 	bridge: #Bridge
 	$bridge: bridge.name
+	bridgeIp: bridge.ip
 }
 #GoHost: #Host & {
 	netdevs: [string]: #Netdev

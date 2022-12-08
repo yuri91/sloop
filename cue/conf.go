@@ -11,6 +11,7 @@ type Netdev struct {
 	Name string
 	Ip string
 	Bridge string `json:"$bridge"`
+	BridgeIp string `json:"bridgeIp"`
 }
 type Host struct {
 	Name string

@@ -155,10 +155,11 @@ ExecStart = ip link set lo up
 
 {{ range $n := .Netdevs}}
 ExecStart = nsenter -t 1 -n -- ip link add {{$n.Bridge}}-{{$.Name}}-{{$n.Name}} type veth peer {{$n.Name}} netns sloop-{{$.Name}}
+ExecStart = nsenter -t 1 -n -- ip link set dev {{$n.Bridge}}-{{$.Name}}-{{$n.Name}} up
 ExecStart = nsenter -t 1 -n -- ip link set dev {{$n.Bridge}}-{{$.Name}}-{{$n.Name}} master {{$n.Bridge}}
-ExecStart = ip addr
 ExecStart = ip link set {{$n.Name}} up
 ExecStart = ip addr add {{$n.Ip}}/16 dev {{$n.Name}}
+ExecStart = ip route add default via {{$n.BridgeIp}}
 {{end}}
 
 {{ range $n := .Netdevs}}
@@ -181,12 +182,13 @@ StopWhenUnneeded = yes
 Type = oneshot
 RemainAfterExit = true
 
+ExecStart = sysctl net.ipv4.ip_forward=1
 ExecStart = ip link add {{.Name}} type bridge
 ExecStart = ip link set {{.Name}} up
 ExecStart = ip addr add {{.Ip}}/16 dev {{.Name}}
 ExecStart = iptables -t nat -A POSTROUTING -s {{.Ip}}/16 ! -o {{.Name}} -j MASQUERADE
 
-ExecStart = iptables -t nat -D POSTROUTING -s {{.Ip}}/16 ! -o {{.Name}} -j MASQUERADE
+ExecStop = iptables -t nat -D POSTROUTING -s {{.Ip}}/16 ! -o {{.Name}} -j MASQUERADE
 ExecStop = ip link delete {{.Name}}
 
 [Install]
