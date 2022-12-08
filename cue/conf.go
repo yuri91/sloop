@@ -42,6 +42,7 @@ type Service struct {
 	Volumes []VolumeMapping `json:"$volumes"`
 	Ports []PortBinding `json:"$ports"`
 	Host string `json:"$host"`
+	Type string
 	Wants []string `json:"$wants"`
 	Requires []string `json:"$requires"`
 	After []string `json:"$after"`

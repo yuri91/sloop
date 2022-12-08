@@ -108,6 +108,7 @@ JoinsNamespaceOf = sloop-host-{{.Host}}.service
 {{end}}
 
 [Service]
+Type = {{.Type}}
 {{ if ne .Host "" }}
 PrivateNetwork = true
 {{end}}
@@ -205,6 +206,7 @@ type UnitConf struct {
 	Binds map[string]string
 	Cmd string
 	Host string
+	Type string
 	Wants []string
 	Requires []string
 	After []string
@@ -320,6 +322,7 @@ func handleService(systemd *dbus.Conn, s cue.Service) (bool, error) {
 		Binds: bindsMap,
 		Cmd: cmdStr,
 		Host: s.Host,
+		Type: s.Type,
 		Wants: s.Wants,
 		Requires: s.Requires,
 		After: s.After,
