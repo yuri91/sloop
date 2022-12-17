@@ -49,18 +49,12 @@ const typesStr = `
 	service: uint16
 } | uint16
 
-#Image: {
-	name: string
-	from: string
-	files: [string]:  #File
-	env: [string]:    string
-	#mounts: [string]: string
-	...
-}
 #Service: {
 	name:  string
 	cmd: [...string]
-	image: #Image
+	from: string
+	files: [string]:  #File
+	env: [string]:    string
 	volumes: [string]: #Volume
 	ports: [...#PortBinding]
 	host: #Host | *null
@@ -81,8 +75,6 @@ $bridge: [Name=_]: #Bridge & {name: string | *Name}
 
 $host: [Name=_]: #Host & {name: string | *Name}
 
-$image: [Name=_]: #Image & {name: string | *Name}
-
 $service: [Name=_]: S=#Service & {
 	name: string | *Name
 	_volumeCheck: {
@@ -95,16 +87,10 @@ $service: [Name=_]: S=#Service & {
 			"\(S.host.name).is_in_host": [ for k, v in $host if v.name == S.host.name {v}] & [S.host]
 		}
 	}
-	_mountCheck: [
-		for k, v in S.image.#mounts {
-			"\(k):\(v).is_mounted": [ for k1, v1 in S.volumes if k1 == v {v}] & [v]
-		},
-	]
-
 }
 `
 const goTypesStr = `
-#GoImage: #Image & {
+#GoService: #Service & {
 	files: [string]:  #File
 	$files: [string]:  #File
 	$files: {
@@ -115,9 +101,6 @@ const goTypesStr = `
 			}
 		}
 	}
-}
-#GoService: #Service & {
-	image: #Image
 	volumes: [string]: #Volume
 	host: #Host | *null
 	ports: [...#PortBinding]
@@ -125,7 +108,6 @@ const goTypesStr = `
 	requires: [...#Dependency]
 	after: [...#Dependency]
 
-	$image: image.name
 	$ports: [
 		for p in ports {
 			{
@@ -175,11 +157,6 @@ $bridges: {
 $hosts: {
 	for _, v in $host {
 		"\(v.name)": v&#GoHost
-	}
-}
-$images: {
-	for _, v in $image {
-		"\(v.name)": v&#GoImage
 	}
 }
 $services: {

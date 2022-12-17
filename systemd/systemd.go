@@ -15,6 +15,7 @@ import (
 	"yuri91/sloop/image"
 
 	"github.com/coreos/go-systemd/v22/dbus"
+	"github.com/samber/lo"
 )
 
 
@@ -30,62 +31,19 @@ func handleVolume(v cue.Volume) error {
 	return nil
 }
 
-func handleImage(i cue.Image) (bool, error) {
-	parts := strings.SplitN(i.From, ":", 2)
+func handleImage(img string) error {
+	parts := strings.SplitN(img, ":", 2)
 	from := parts[0]
 	ver := parts[1]
 
-	p := filepath.Join(common.ImagePath, i.Name)
-	confP := filepath.Join(p, "conf.cue")
-	// if the file does not exists, oldConf will be nil
-	oldConf, _ := os.ReadFile(confP)
+	p := filepath.Join(common.ImagePath, img)
 
-	newConf, err := json.Marshal(i)
+	err := image.Fetch(from, ver, p)
 	if err != nil {
-		return false, CreateImageError.Wrap(err, "cannot marshal config %s", string(newConf))
-	}
-	if bytes.Compare(oldConf,newConf) == 0 {
-		return false, nil
+		return CreateImageError.Wrap(err, "cannot fetch image %s", img)
 	}
 
-	err = os.RemoveAll(p)
-	if err != nil {
-		return false, RemoveImageError.Wrap(err, "cannot remove image %s", i.Name)
-	}
-
-	err = image.Fetch(from, ver, p)
-	if err != nil {
-		return false, CreateImageError.Wrap(err, "cannot create fetch image %s", i.Name)
-	}
-
-	for path, file := range i.Files {
-		err = image.Extra(p, path, file.Content, fs.FileMode(file.Permissions))
-		if err != nil {
-			return false, CreateImageError.Wrap(err, "cannot add file %s to image %s", path, i.Name)
-		}
-	}
-
-	meta, err := image.ReadMetadata(p)
-	if err != nil {
-		return false, err
-	}
-	env := meta.Env
-	for k,v := range i.Env {
-		env = append(env, strings.Join([]string{k,v}, "="))
-	}
-	envS := strings.Join(env, "\n")
-
-	err = os.WriteFile(filepath.Join(p, "environment"), []byte(envS), 0666)
-	if err != nil {
-		return false, CreateImageError.Wrap(err, "cannot add environment file to image %s", i.Name)
-	}
-
-	err = os.WriteFile(confP, newConf, 0666)
-	if err != nil {
-		return false, CreateImageError.Wrap(err, "cannot create conf for image %s", i.Name)
-	}
-
-	return true, nil
+	return nil
 }
 
 const unitTemplateStr = `
@@ -123,7 +81,7 @@ ReadOnlyPaths = /
 {{ range $k, $v := .Binds}}
 BindPaths = {{$k}}:{{$v}}
 {{end}}
-EnvironmentFile = {{.ImageDir}}/environment
+EnvironmentFile = {{.ServiceDir}}/environment
 ExecStart = {{.Cmd}}
 
 [Install]
@@ -200,6 +158,7 @@ var bridgeTemplate *template.Template = template.Must(template.New("bridge").Fun
 type UnitConf struct {
 	Name string
 	ImageDir string
+	ServiceDir string
 	Binds map[string]string
 	Cmd string
 	Host string
@@ -221,7 +180,7 @@ func handleBridge(systemd *dbus.Conn, b cue.Bridge) (bool, error) {
 	unitStr := buf.String()
 
 	unitName := "sloop-bridge-" + b.Name + ".service"
-	unitP := filepath.Join(common.BridgePath, unitName)
+	unitP := filepath.Join(common.UnitPath, unitName)
 
 	// If the file is not there, oldUnit will be null
 	oldUnit, _ := os.ReadFile(unitP)
@@ -258,7 +217,7 @@ func handleHost(systemd *dbus.Conn, h cue.Host) (bool, error) {
 	unitStr := buf.String()
 
 	unitName := "sloop-host-" + h.Name + ".service"
-	unitP := filepath.Join(common.BridgePath, unitName)
+	unitP := filepath.Join(common.UnitPath, unitName)
 
 	// If the file is not there, oldUnit will be null
 	oldUnit, _ := os.ReadFile(unitP)
@@ -286,8 +245,72 @@ func handleHost(systemd *dbus.Conn, h cue.Host) (bool, error) {
 	return true, nil
 }
 
-func handleService(systemd *dbus.Conn, s cue.Service) (bool, error) {
-	imageDir := filepath.Join(common.ImagePath, s.Image) 
+func handleServiceFiles(systemd *dbus.Conn, s cue.Service) (bool, error) {
+
+	p := filepath.Join(common.ServicePath, s.Name)
+	confP := filepath.Join(p, "conf.cue")
+	// if the file does not exists, oldConf will be nil
+	oldConf, _ := os.ReadFile(confP)
+
+	newConf, err := json.Marshal(s)
+	if err != nil {
+		return false, CreateServiceError.Wrap(err, "cannot marshal config %s", string(newConf))
+	}
+	if bytes.Compare(oldConf,newConf) == 0 {
+		return false, nil
+	}
+
+	err = stopDisableDeleteUnit(systemd, s.Name + ".service")
+	if err != nil {
+		return false, err
+	}
+
+	err = os.RemoveAll(p)
+	if err != nil {
+		return false, CreateServiceError.Wrap(err, "cannot remove service %s files", s.Name)
+	}
+
+	err = os.MkdirAll(filepath.Join(p, "files"), 700)
+	if err != nil {
+		return false, CreateServiceError.Wrap(err, "cannot create service %s directory", s.Name)
+	}
+
+	for path, file := range s.Files {
+		fullP := filepath.Join(p, "files", path)
+		if err := os.MkdirAll(filepath.Dir(fullP), 0777); err != nil {
+			return false, err
+		}
+		err := os.WriteFile(fullP, []byte(file.Content), fs.FileMode(file.Permissions))
+		if err != nil {
+			return false, CreateServiceError.Wrap(err, "cannot add file %s to service %s", path, s.Name)
+		}
+	}
+
+	meta, err := image.ReadMetadata(filepath.Join(common.ImagePath, s.From))
+	if err != nil {
+		return false, err
+	}
+	env := meta.Env
+	for k,v := range s.Env {
+		env = append(env, strings.Join([]string{k,v}, "="))
+	}
+	envS := strings.Join(env, "\n")
+
+	err = os.WriteFile(filepath.Join(p, "environment"), []byte(envS), 0666)
+	if err != nil {
+		return false, CreateImageError.Wrap(err, "cannot add environment file to service %s", s.Name)
+	}
+
+	err = os.WriteFile(confP, newConf, 0666)
+	if err != nil {
+		return false, CreateImageError.Wrap(err, "cannot create conf for service %s", s.Name)
+	}
+
+	return true, nil
+}
+
+func handleService(systemd *dbus.Conn, s cue.Service) error {
+	imageDir := filepath.Join(common.ImagePath, s.From)
 	bindsMap := make(map[string]string)
 	for _,v := range s.Volumes {
 		var n string
@@ -298,11 +321,16 @@ func handleService(systemd *dbus.Conn, s cue.Service) (bool, error) {
 		}
 		bindsMap[n] = v.Dest
 	}
+	for path := range s.Files {
+		fullP := filepath.Join(common.ServicePath, s.Name, "files", path)
+		bindsMap[fullP] = path
+	}
+
 	cmdVec := s.Cmd
 	if len(cmdVec) == 0 {
-		meta, err := image.ReadMetadata(filepath.Join(common.ImagePath, s.Image))
+		meta, err := image.ReadMetadata(filepath.Join(common.ImagePath, s.From))
 		if err != nil {
-			return false, CreateServiceError.Wrap(err, "failed to get metadata for image %s for service %s", s.Image, s.Name)
+			return CreateServiceError.Wrap(err, "failed to get metadata for image %s for service %s", s.From, s.Name)
 		}
 		cmdVec = meta.Args
 	}
@@ -310,12 +338,15 @@ func handleService(systemd *dbus.Conn, s cue.Service) (bool, error) {
 	for _,c := range cmdVec {
 		cmdStr += fmt.Sprintf("%q ", c)
 	}
-	s.Requires = append(s.Requires, "sloop-host-" + s.Host + ".service")
-	s.After = append(s.After, "sloop-host-" + s.Host + ".service")
+	if s.Host != "" {
+		s.Requires = append(s.Requires, "sloop-host-" + s.Host + ".service")
+		s.After = append(s.After, "sloop-host-" + s.Host + ".service")
+	}
 	var buf bytes.Buffer
 	conf := UnitConf {
 		Name: s.Name,
 		ImageDir: imageDir,
+		ServiceDir: filepath.Join(common.ServicePath, s.Name),
 		Binds: bindsMap,
 		Cmd: cmdStr,
 		Host: s.Host,
@@ -326,36 +357,23 @@ func handleService(systemd *dbus.Conn, s cue.Service) (bool, error) {
 	}
 	err := unitTemplate.Execute(&buf, conf)
 	if err != nil {
-		return false, CreateServiceError.Wrap(err, "failed to execute template for service %s", s.Name)
+		return CreateServiceError.Wrap(err, "failed to execute template for service %s", s.Name)
 	}
 	unitStr := buf.String()
 
 	unitP := filepath.Join(common.UnitPath, s.Name + ".service")
 
-	// If the file is not there, oldUnit will be null
-	oldUnit, _ := os.ReadFile(unitP)
-	if unitStr == string(oldUnit) {
-		return false, nil
-	}
-
-	if len(oldUnit) != 0 {
-		err = stopDisableDeleteUnit(systemd, s.Name + ".service")
-		if err != nil {
-			return false, err
-		}
-	}
-
 	err = os.WriteFile(unitP, []byte(unitStr), 0644)
 	if err != nil {
-		return false, CreateServiceError.Wrap(err, "failed to write unit file for service %s", s.Name)
+		return CreateServiceError.Wrap(err, "failed to write unit file for service %s", s.Name)
 	}
 
 	//enable service
 	_, _, err = systemd.EnableUnitFilesContext(context.Background(), []string{unitP}, false, true)
 	if err != nil {
-		return false, RuntimeServiceError.Wrap(err, "cannot enable unit for service %s", s.Name)
+		return RuntimeServiceError.Wrap(err, "cannot enable unit for service %s", s.Name)
 	}
-	return true, nil
+	return nil
 }
 
 func stopDisableDeleteUnit(systemd *dbus.Conn, name string) error {
@@ -389,6 +407,92 @@ func stopDisableDeleteUnit(systemd *dbus.Conn, name string) error {
 	return nil
 }
 
+func gatherImages(services map[string]cue.Service) []string {
+	imgMap := lo.MapEntries(services, func(n string, s cue.Service) (string, bool) {
+		return s.From, true
+	})
+	return lo.Keys(imgMap)
+}
+
+func getCurImages() ([]string, error) {
+	var curImages []string
+	err := filepath.WalkDir(common.ImagePath, func(path string, info fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if !info.IsDir() {
+			return nil
+		}
+		if _, err = os.Stat(filepath.Join(path, "umoci.json")); err != nil {
+			return nil
+		}
+		curImages = append(curImages, strings.TrimPrefix(path, common.ImagePath + "/"))
+		return filepath.SkipDir
+	})
+	if err != nil {
+		return  nil, RemoveImageError.Wrap(err, "cannot list current images") 
+	}
+	return curImages, nil
+}
+
+func getCurUnits() ([]string, error) {
+	curElems, err := os.ReadDir(common.UnitPath)
+	if err != nil {
+		return  nil, RemoveUnitError.Wrap(err, "cannot list current units")
+	}
+	curUnits := lo.Map(curElems, func(e os.DirEntry, i int) string {
+		return e.Name()
+	})
+	return curUnits, nil
+}
+
+func getCurServices() ([]string, error) {
+	curUnits, err := getCurUnits()
+	if err != nil {
+		return  nil, err
+	}
+	curServices := lo.FilterMap(curUnits, func(e string, i int) (string, bool) {
+		if strings.HasPrefix(e, "sloop-bridge-") {
+			return "", false
+		}
+		if strings.HasPrefix(e, "sloop-host-") {
+			return "", false
+		}
+		return strings.TrimSuffix(e, ".service"), true
+	})
+	return curServices, nil
+}
+
+func getCurBridges() ([]string, error) {
+	curUnits, err := getCurUnits()
+	if err != nil {
+		return  nil, err
+	}
+	curBridges := lo.FilterMap(curUnits, func(e string, i int) (string, bool) {
+		if !strings.HasPrefix(e, "sloop-bridge-") {
+			return "", false
+		}
+		trimmed := strings.TrimPrefix(e, "sloop-bridge-")
+		return strings.TrimSuffix(trimmed, ".service"), true
+	})
+	return curBridges, nil
+}
+
+func getCurHosts() ([]string, error) {
+	curUnits, err := getCurUnits()
+	if err != nil {
+		return  nil, err
+	}
+	curHosts := lo.FilterMap(curUnits, func(e string, i int) (string, bool) {
+		if !strings.HasPrefix(e, "sloop-host-") {
+			return "", false
+		}
+		trimmed := strings.TrimPrefix(e, "sloop-host-")
+		return strings.TrimSuffix(trimmed, ".service"), true
+	})
+	return curHosts, nil
+}
+
 func Create(config cue.Config) error {
 	err := os.MkdirAll(common.VolumePath, 0700)
 	if err != nil {
@@ -402,13 +506,9 @@ func Create(config cue.Config) error {
 	if err != nil {
 		return  FilesystemError.Wrap(err, "cannot create units directory") 
 	}
-	os.MkdirAll(common.BridgePath, 0700)
+	os.MkdirAll(common.ServicePath, 0700)
 	if err != nil {
-		return  FilesystemError.Wrap(err, "cannot create bridges directory") 
-	}
-	os.MkdirAll(common.HostPath, 0700)
-	if err != nil {
-		return  FilesystemError.Wrap(err, "cannot create hosts directory") 
+		return  FilesystemError.Wrap(err, "cannot create services directory") 
 	}
 
 	reload := false
@@ -416,6 +516,23 @@ func Create(config cue.Config) error {
 	systemd, err := dbus.NewSystemConnectionContext(context.Background())
 	if err != nil {
 		return  RuntimeServiceError.Wrap(err, "cannot connect to systemd dbus") 
+	}
+
+	curImages, err := getCurImages();
+	if err != nil {
+		return err
+	}
+	curServices, err := getCurServices()
+	if err != nil {
+		return err
+	}
+	curBridges, err := getCurBridges()
+	if err != nil {
+		return err
+	}
+	curHosts, err := getCurHosts()
+	if err != nil {
+		return err
 	}
 
 
@@ -428,6 +545,15 @@ func Create(config cue.Config) error {
 			reload = true
 		}
 	}
+	bridgesToRemove, _ := lo.Difference(curBridges, lo.Keys(config.Bridges))
+	for _, b := range bridgesToRemove {
+		err = stopDisableDeleteUnit(systemd, "sloop-bridge-"+b+".service")
+		if err != nil {
+			return err
+		}
+		reload = true
+	}
+
 	for _, h := range config.Hosts {
 		changed, err := handleHost(systemd, h)
 		if err != nil {
@@ -437,6 +563,14 @@ func Create(config cue.Config) error {
 			reload = true
 		}
 	}
+	hostsToRemove, _ := lo.Difference(curHosts, lo.Keys(config.Hosts))
+	for _, b := range hostsToRemove {
+		err = stopDisableDeleteUnit(systemd, "sloop-host-"+b+".service")
+		if err != nil {
+			return err
+		}
+		reload = true
+	}
 
 	for _, v := range config.Volumes {
 		err := handleVolume(v)
@@ -445,49 +579,42 @@ func Create(config cue.Config) error {
 		}
 	}
 
-	curImages, err := os.ReadDir(common.ImagePath)
-	if err != nil {
-		return  RemoveImageError.Wrap(err, "cannot list current images") 
-	}
-	for _, ci := range curImages {
-		if _, exists := config.Images[ci.Name()]; !exists {
-			err = os.RemoveAll(filepath.Join(common.ImagePath, ci.Name()))
-			if err != nil {
-				return  RemoveImageError.Wrap(err, "cannot remove image %s", ci.Name()) 
-			}
-		}
-	}
-	for _,i := range config.Images {
-		changed, err := handleImage(i)
+	images := gatherImages(config.Services)
+	imagesToRemove, imagesToAdd := lo.Difference(curImages, images)
+	for _,i := range imagesToAdd {
+		err := handleImage(i)
 		if err != nil {
 			return err
 		}
-		if changed {
-			reload = true
+	}
+	for _, ci := range imagesToRemove {
+		err = os.RemoveAll(filepath.Join(common.ImagePath, ci))
+		if err != nil {
+			return  RemoveImageError.Wrap(err, "cannot remove image %s", ci) 
 		}
 	}
 
-	curUnits, err := os.ReadDir(common.UnitPath)
-	if err != nil {
-		return  RemoveUnitError.Wrap(err, "cannot list current units") 
-	}
-	for _, cu := range curUnits {
-		if _, exists := config.Services[cu.Name()]; !exists {
-			err = stopDisableDeleteUnit(systemd, cu.Name())
-			if err != nil {
-				return err
-			}
-			reload = true
-		}
-	}
-	for _, s := range config.Services {
-		changed, err := handleService(systemd, s)
+	servicesToRemove, _ := lo.Difference(curServices, lo.Keys(config.Services))
+	for _, cu := range servicesToRemove {
+		err = stopDisableDeleteUnit(systemd, cu+".service")
 		if err != nil {
 			return err
 		}
-		if changed {
-			reload = true
+		reload = true
+	}
+	for _, s := range config.Services {
+		changed, err := handleServiceFiles(systemd, s)
+		if err != nil {
+			return err
 		}
+		if !changed {
+			continue
+		}
+		err = handleService(systemd, s)
+		if err != nil {
+			return err
+		}
+		reload = true
 	}
 
 	if reload {
@@ -534,32 +661,9 @@ func Purge() error {
 		}
 	}
 
-	curHosts, err := os.ReadDir(common.HostPath)
-	if err == nil {
-		for _, cu := range curHosts {
-			err = stopDisableDeleteUnit(systemd, cu.Name())
-			if err != nil {
-				return err
-			}
-		}
-		err = os.RemoveAll(common.HostPath)
-		if err != nil {
-			return RemoveUnitError.Wrap(err, "cannot remove host directory")
-		}
-	}
-
-	curBridges, err := os.ReadDir(common.BridgePath)
-	if err == nil {
-		for _, cu := range curBridges {
-			err = stopDisableDeleteUnit(systemd, cu.Name())
-			if err != nil {
-				return err
-			}
-		}
-		err = os.RemoveAll(common.BridgePath)
-		if err != nil {
-			return RemoveUnitError.Wrap(err, "cannot remove bridge directory")
-		}
+	err = os.RemoveAll(common.ServicePath)
+	if err != nil {
+		return RemoveUnitError.Wrap(err, "cannot remove service directory")
 	}
 
 	systemd.ReloadContext(context.Background())

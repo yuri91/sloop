@@ -25,12 +25,6 @@ type PortBinding struct {
 	Host uint16
 	Service uint16
 }
-type Image struct {
-	Name string
-	From string
-	Files map[string]File `json:"$files"`
-	Env map[string]string
-}
 type VolumeMapping struct {
 	Name string
 	Dest string
@@ -38,7 +32,9 @@ type VolumeMapping struct {
 type Service struct {
 	Name  string
 	Cmd []string
-	Image string `json:"$image"`
+	From string
+	Files map[string]File `json:"$files"`
+	Env map[string]string
 	Volumes []VolumeMapping `json:"$volumes"`
 	Ports []PortBinding `json:"$ports"`
 	Host string `json:"$host"`
@@ -51,7 +47,6 @@ type Config struct {
 	Volumes map[string]Volume `json:"$volumes"`
 	Bridges map[string]Bridge `json:"$bridges"`
 	Hosts map[string]Host `json:"$hosts"`
-	Images map[string]Image `json:"$images"`
 	Services map[string]Service `json:"$services"`
 }
 
