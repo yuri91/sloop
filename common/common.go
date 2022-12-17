@@ -4,16 +4,16 @@ import "path/filepath"
 
 var ConfPath string
 var ImagePath string
+var ServicePath string
 var UnitPath string
 var VolumePath string
-var BridgePath string
-var HostPath string
 
-func SetPaths(baseDir string) {
-	ConfPath = filepath.Join(baseDir, "")
-	ImagePath = filepath.Join(baseDir, ".images")
-	UnitPath = filepath.Join(baseDir, ".units")
-	VolumePath = filepath.Join(baseDir, ".volumes")
-	BridgePath = filepath.Join(baseDir, ".bridges")
-	HostPath = filepath.Join(baseDir, ".hosts")
+var baseDir string = "/var/lib/sloop"
+
+func SetPaths(confDir string) {
+	ConfPath = filepath.Join(confDir, "")
+	ImagePath = filepath.Join(baseDir, "images")
+	ServicePath = filepath.Join(baseDir, "services")
+	UnitPath = filepath.Join(baseDir, "units")
+	VolumePath = filepath.Join(baseDir, "volumes")
 }
