@@ -74,31 +74,34 @@ Requires = {{$u}}
 {{ range $u := .After}}
 After = {{$u}}
 {{end}}
-{{ if ne .Host "" }}
-JoinsNamespaceOf = sloop-host-{{.Host}}.service
-{{end}}
 
 [Service]
-Type = {{.Type}}
-{{ if ne .Host "" }}
-PrivateNetwork = true
-{{end}}
-PrivateTmp = true
-PrivateDevices = true
-PrivateIPC = true
-#PrivateUsers = true
-ProtectHostname = true
-ProtectProc = invisible
-MountAPIVFS = true
-BindReadOnlyPaths=/dev/log /run/systemd/journal/socket /run/systemd/journal/stdout
+Type = notify
+NotifyAccess=all
+ExecStart = systemd-nspawn \
+	--volatile=overlay \
+	-a \
+	--keep-unit \
+	--register=no \
+	--oci-bundle={{.BundleDir}} \
+	-M {{.Name}} \
+{{- if ne .Host "" }}
+	--network-namespace-path=/var/run/netns/sloop-{{.Host}} \
+{{- end }}
+{{- range $k, $v := .Binds }}
+	--bind={{$k}}:{{$v}} \
+{{- end }}
+{{- if eq .Type "notify" }}
+	--bind=/run/systemd/notify \
+{{- end }}
+{{- if ne .Capabilities "" }}
+	--capability={{.Capabilities}} \
+{{- end }}
+	{{.Cmd}}
 
-RootDirectory = {{.ImageDir}}/rootfs
-ReadOnlyPaths = /
-{{ range $k, $v := .Binds}}
-BindPaths = {{$k}}:{{$v}}
-{{end}}
-EnvironmentFile = {{.ServiceDir}}/environment
-ExecStart = {{.Cmd}}
+{{ if eq .Type "notify" -}}
+Environment=NOTIFY_SOCKET=
+{{ end -}}
 
 [Install]
 WantedBy=default.target
@@ -173,9 +176,10 @@ var bridgeTemplate *template.Template = template.Must(template.New("bridge").Fun
 
 type UnitConf struct {
 	Name string
-	ImageDir string
+	BundleDir string
 	ServiceDir string
 	Binds map[string]string
+	Capabilities string
 	Cmd string
 	Host string
 	Type string
@@ -309,11 +313,19 @@ func handleServiceFiles(systemd *dbus.Conn, s cue.Service) (bool, error) {
 	for k,v := range s.Env {
 		meta.Process.Env = append(meta.Process.Env, strings.Join([]string{k,v}, "="))
 	}
-	envS := strings.Join(env, "\n")
+	if s.Type == "notify" {
+		meta.Process.Env = append(meta.Process.Env, "NOTIFY_SOCKET=/run/systemd/notify")
+	}
+	meta.Process.Capabilities.Bounding = append(meta.Process.Capabilities.Bounding, "CAP_CHOWN")
+	meta.Root.Path = getImageRootPath(s.From)
 
-	err = os.WriteFile(filepath.Join(p, "environment"), []byte(envS), 0666)
+	metaB, err := json.Marshal(meta)
 	if err != nil {
-		return false, CreateImageError.Wrap(err, "cannot add environment file to service %s", s.Name)
+		return false, CreateImageError.Wrap(err, "cannot marshal OCI config for service %s", s.Name)
+	}
+	err = os.WriteFile(filepath.Join(p, "config.json"), metaB, 0666)
+	if err != nil {
+		return false, CreateImageError.Wrap(err, "cannot add OCI config file to service %s", s.Name)
 	}
 
 	err = os.WriteFile(confP, newConf, 0666)
@@ -325,7 +337,7 @@ func handleServiceFiles(systemd *dbus.Conn, s cue.Service) (bool, error) {
 }
 
 func handleService(systemd *dbus.Conn, s cue.Service) error {
-	imageDir := filepath.Join(common.ImagePath, s.From)
+	serviceDir := filepath.Join(common.ServicePath, s.Name)
 	bindsMap := make(map[string]string)
 	for _,v := range s.Volumes {
 		var n string
@@ -360,9 +372,10 @@ func handleService(systemd *dbus.Conn, s cue.Service) error {
 	var buf bytes.Buffer
 	conf := UnitConf {
 		Name: s.Name,
-		ImageDir: imageDir,
+		BundleDir: serviceDir,
 		ServiceDir: filepath.Join(common.ServicePath, s.Name),
 		Binds: bindsMap,
+		Capabilities: strings.Join(s.Capabilities, ","),
 		Cmd: cmdStr,
 		Host: s.Host,
 		Type: s.Type,
