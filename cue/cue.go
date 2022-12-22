@@ -50,7 +50,7 @@ const typesStr = `
 } | uint16
 
 #Service: {
-	name:  string
+	name:  =~ "^[A-Za-z0-9-]+$"
 	cmd: [...string]
 	from: string
 	files: [string]:  #File
@@ -70,14 +70,16 @@ const typesStr = `
 
 `
 const constraintsStr = `
-$volume: [Name=_]: #Volume & {name: string | *Name}
+import "strings"
 
-$bridge: [Name=_]: #Bridge & {name: string | *Name}
+$volume: [Name=_]: #Volume & {name: string | *strings.Replace(Name,"_","-",-1)}
 
-$host: [Name=_]: #Host & {name: string | *Name}
+$bridge: [Name=_]: #Bridge & {name: string | *strings.Replace(Name,"_","-",-1)}
+
+$host: [Name=_]: #Host & {name: string | *strings.Replace(Name,"_","-",-1)}
 
 $service: [Name=_]: S=#Service & {
-	name: string | *Name
+	name: string | *strings.Replace(Name,"_","-",-1)
 	_volumeCheck: {
 		for k, v in S.volumes {
 			"\(v.name).is_in_$volume": [ for k1, v1 in $volume if v1.name == v.name {v1}] & [v]
