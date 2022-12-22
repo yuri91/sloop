@@ -8,6 +8,7 @@ require (
 	github.com/coreos/go-systemd/v22 v22.3.2
 	github.com/joomcode/errorx v1.1.0
 	github.com/kr/pretty v0.2.1
+	github.com/opencontainers/runtime-spec v1.0.3-0.20211214071223-8958f93039ab
 	github.com/opencontainers/umoci v0.4.7
 	github.com/samber/lo v1.36.0
 	github.com/spf13/cobra v1.5.0
@@ -70,7 +71,6 @@ require (
 	github.com/opencontainers/go-digest v1.0.0 // indirect
 	github.com/opencontainers/image-spec v1.0.3-0.20220114050600-8b9d41f48198 // indirect
 	github.com/opencontainers/runc v1.1.3 // indirect
-	github.com/opencontainers/runtime-spec v1.0.3-0.20211214071223-8958f93039ab // indirect
 	github.com/opencontainers/selinux v1.10.1 // indirect
 	github.com/ostreedev/ostree-go v0.0.0-20210805093236-719684c64e4f // indirect
 	github.com/pkg/errors v0.9.1 // indirect

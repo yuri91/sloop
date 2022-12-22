@@ -290,9 +290,8 @@ func handleServiceFiles(systemd *dbus.Conn, s cue.Service) (bool, error) {
 	if err != nil {
 		return false, err
 	}
-	env := meta.Env
 	for k,v := range s.Env {
-		env = append(env, strings.Join([]string{k,v}, "="))
+		meta.Process.Env = append(meta.Process.Env, strings.Join([]string{k,v}, "="))
 	}
 	envS := strings.Join(env, "\n")
 
@@ -328,11 +327,11 @@ func handleService(systemd *dbus.Conn, s cue.Service) error {
 
 	cmdVec := s.Cmd
 	if len(cmdVec) == 0 {
-		meta, err := image.ReadMetadata(filepath.Join(common.ImagePath, s.From))
+		meta, err := image.ReadMetadata(getImagePath(s.From))
 		if err != nil {
 			return CreateServiceError.Wrap(err, "failed to get metadata for image %s for service %s", s.From, s.Name)
 		}
-		cmdVec = meta.Args
+		cmdVec = meta.Process.Args
 	}
 	cmdStr := ""
 	for _,c := range cmdVec {

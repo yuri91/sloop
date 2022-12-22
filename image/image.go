@@ -12,6 +12,9 @@ import (
 	"github.com/opencontainers/umoci/oci/casext"
 	"github.com/opencontainers/umoci/oci/layer"
 
+	"github.com/opencontainers/runtime-spec/specs-go"
+
+
 	"github.com/containers/image/v5/copy"
 	"github.com/containers/image/v5/signature"
 	"github.com/containers/image/v5/transports/alltransports"
@@ -82,23 +85,15 @@ func Extra(bundlePath string, extraPath string, extraContent string, extraMode o
 	return err
 }
 
-type Metadata struct {
-	Env []string `json:"env"`
-	Args []string `json:"args"`
-	Cwd string `json:"cwd"`
-}
-type metadataOuter struct {
-	Meta Metadata `json:"process"`
-}
-func ReadMetadata(bundlePath string) (*Metadata, error) {
+func ReadMetadata(bundlePath string) (*specs.Spec, error) {
 	confB, err := os.ReadFile(filepath.Join(bundlePath, "config.json"))
 	if err != nil {
 		return nil, MetadataError.Wrap(err, "cannot read config %s", bundlePath)
 	}
-	var outer metadataOuter
-	err = json.Unmarshal(confB, &outer)
+	var meta specs.Spec
+	err = json.Unmarshal(confB, &meta)
 	if err != nil {
 		return nil, MetadataError.Wrap(err, "cannot unmarshal config %s", bundlePath)
 	}
-	return &outer.Meta, nil
+	return &meta, nil
 }
