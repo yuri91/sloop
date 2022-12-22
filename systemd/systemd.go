@@ -18,6 +18,22 @@ import (
 	"github.com/samber/lo"
 )
 
+func replaceLast(orig, old, new_ string) string {
+	i := strings.LastIndex(orig, old)
+	if i == -1 {
+		return orig
+	}
+	return orig[:i] + new_ + orig[i+len(old):]
+}
+func getImagePath(from string) string {
+	from = replaceLast(from, ":", "-")
+	path := filepath.Join(common.ImagePath, from)
+	return path
+}
+func getImageRootPath(from string) string {
+	path := filepath.Join(getImagePath(from), "rootfs")
+	return path
+}
 
 func handleVolume(v cue.Volume) error {
 	if v.Name[0] == '/' {
@@ -36,7 +52,7 @@ func handleImage(img string) error {
 	from := parts[0]
 	ver := parts[1]
 
-	p := filepath.Join(common.ImagePath, img)
+	p := getImagePath(img)
 
 	err := image.Fetch(from, ver, p)
 	if err != nil {
@@ -286,7 +302,7 @@ func handleServiceFiles(systemd *dbus.Conn, s cue.Service) (bool, error) {
 		}
 	}
 
-	meta, err := image.ReadMetadata(filepath.Join(common.ImagePath, s.From))
+	meta, err := image.ReadMetadata(getImagePath(s.From))
 	if err != nil {
 		return false, err
 	}
@@ -425,7 +441,9 @@ func getCurImages() ([]string, error) {
 		if _, err = os.Stat(filepath.Join(path, "umoci.json")); err != nil {
 			return nil
 		}
-		curImages = append(curImages, strings.TrimPrefix(path, common.ImagePath + "/"))
+		name := strings.TrimPrefix(path, common.ImagePath + "/")
+		name = replaceLast(name, "-", ":")
+		curImages = append(curImages, name)
 		return filepath.SkipDir
 	})
 	if err != nil {
