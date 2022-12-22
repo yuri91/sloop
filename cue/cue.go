@@ -58,6 +58,7 @@ const typesStr = `
 	volumes: [string]: #Volume
 	ports: [...#PortBinding]
 	host: #Host | *null
+	capabilities: [...string] | *[]
 	type: "notify" | *"simple"
 	wants: [...#Dependency]
 	requires: [...#Dependency]

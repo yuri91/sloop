@@ -35,6 +35,7 @@ type Service struct {
 	From string
 	Files map[string]File `json:"$files"`
 	Env map[string]string
+	Capabilities []string
 	Volumes []VolumeMapping `json:"$volumes"`
 	Ports []PortBinding `json:"$ports"`
 	Host string `json:"$host"`
