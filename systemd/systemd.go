@@ -61,10 +61,11 @@ func handleImage(img string) error {
 
 	return nil
 }
-
 const unitTemplateStr = `
 [Unit]
 Description= Sloop service {{.Name}}
+PartOf = sloop.target
+Before = sloop.target
 {{ range $u := .Wants}}
 Wants = {{$u}}
 {{end}}
@@ -76,6 +77,7 @@ After = {{$u}}
 {{end}}
 
 [Service]
+Slice=sloop.slice
 Type = notify
 NotifyAccess=all
 ExecStart = systemd-nspawn \
@@ -118,6 +120,7 @@ Requires = sloop-bridge-{{$n.Bridge}}.service
 {{end}}
 
 [Service]
+Slice=sloop.slice
 Type = oneshot
 RemainAfterExit = true
 PrivateNetwork = yes
@@ -154,6 +157,7 @@ After = network-online.target
 StopWhenUnneeded = yes
 
 [Service]
+Slice=sloop.slice
 Type = oneshot
 RemainAfterExit = true
 
@@ -220,8 +224,8 @@ func handleBridge(systemd *dbus.Conn, b cue.Bridge) (bool, error) {
 		return false, CreateServiceError.Wrap(err, "failed to write unit file for bridge %s", b.Name)
 	}
 
-	//enable service
-	_, _, err = systemd.EnableUnitFilesContext(context.Background(), []string{unitP}, false, true)
+	//link service
+	_, err = systemd.LinkUnitFilesContext(context.Background(), []string{unitP}, false, true)
 	if err != nil {
 		return false, RuntimeServiceError.Wrap(err, "cannot enable unit for bridge %s", b.Name)
 	}
@@ -435,6 +439,86 @@ func stopDisableDeleteUnit(systemd *dbus.Conn, name string) error {
 	return nil
 }
 
+const sliceStr string = `
+[Unit]
+Description=Slice used to run sloop services
+Before=slices.target
+
+[Slice]
+MemoryAccounting=true
+IOAccounting=true
+CPUAccounting=true
+`
+
+func handleSlice(systemd *dbus.Conn) (bool, error) {
+	unitP := filepath.Join(common.UnitPath, "sloop.slice")
+
+	oldUnit, _ := os.ReadFile(unitP)
+	if targetStr == string(oldUnit) {
+		return false, nil
+	}
+
+	if oldUnit != nil {
+		err := stopDisableDeleteUnit(systemd, "sloop.slice")
+		if err != nil {
+			return false, err
+		}
+	}
+
+	err := os.WriteFile(unitP, []byte(sliceStr), 0644)
+	if err != nil {
+		return false, CreateServiceError.Wrap(err, "failed to write unit file for  sloop.slice")
+	}
+	_, err = systemd.LinkUnitFilesContext(context.Background(), []string{unitP}, false, true)
+	if err != nil {
+		return false, RuntimeServiceError.Wrap(err, "cannot link sloop.slice")
+	}
+	return true, nil
+}
+
+const targetStr string = `
+[Unit]
+Description=Sloop target
+Requires=multi-user.target
+`
+
+func handleTarget(systemd *dbus.Conn) (bool, error) {
+	unitP := filepath.Join(common.UnitPath, "sloop.target")
+
+	oldUnit, _ := os.ReadFile(unitP)
+	if targetStr == string(oldUnit) {
+		return false, nil
+	}
+
+	err := stopDisableDeleteUnit(systemd, "sloop.target")
+	if err != nil {
+		return false, err
+	}
+
+	err = os.WriteFile(unitP, []byte(targetStr), 0644)
+	if err != nil {
+		return false, CreateServiceError.Wrap(err, "failed to write unit file for  sloop.target")
+	}
+	_, _, err = systemd.EnableUnitFilesContext(context.Background(), []string{unitP}, false, true)
+	if err != nil {
+		return false, RuntimeServiceError.Wrap(err, "cannot enable sloop.target")
+	}
+	return true, nil
+}
+
+func startService(systemd *dbus.Conn, service string) error {
+	wait := make(chan string)
+	systemd.StartUnitContext(context.Background(), service, "replace", wait)
+	fmt.Printf("starting %s...\n", service)
+	res := <- wait
+	if res != "done" {
+		return RuntimeServiceError.New("cannot start service %s", service)
+	}
+	fmt.Printf("done\n")
+	return nil
+}
+
+
 func gatherImages(services map[string]cue.Service) []string {
 	imgMap := lo.MapEntries(services, func(n string, s cue.Service) (string, bool) {
 		return s.From, true
@@ -545,6 +629,22 @@ func Create(config cue.Config) error {
 		return err
 	}
 
+	changed, err := handleSlice(systemd)
+	if err != nil {
+		return err
+	}
+	if changed {
+		reload = true
+	}
+
+	changed, err = handleTarget(systemd)
+	if err != nil {
+		return err
+	}
+	if changed {
+		reload = true
+	}
+
 
 	for _, b := range config.Bridges {
 		changed, err := handleBridge(systemd, b)
@@ -633,14 +733,14 @@ func Create(config cue.Config) error {
 
 	for _, s := range config.Services {
 		//start service
-		wait := make(chan string)
-		systemd.StartUnitContext(context.Background(), s.Name + ".service", "replace", wait)
-		fmt.Printf("starting %s...\n", s.Name)
-		res := <- wait
-		if res != "done" {
-			return RuntimeServiceError.New("cannot start service %s", s.Name)
+		err = startService(systemd, "sloop-service-" + s.Name + ".service")
+		if err != nil {
+			return err
 		}
-		fmt.Printf("done\n")
+	}
+	err = startService(systemd, "sloop.target")
+	if err != nil {
+		return err
 	}
 
 	return nil
