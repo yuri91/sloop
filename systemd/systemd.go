@@ -280,7 +280,7 @@ func handleServiceFiles(systemd *dbus.Conn, s cue.Service) (bool, error) {
 		return false, nil
 	}
 
-	err = stopDisableDeleteUnit(systemd, s.Name + ".service")
+	err = stopDisableDeleteUnit(systemd, "sloop-service-" + s.Name + ".service")
 	if err != nil {
 		return false, err
 	}
@@ -389,7 +389,7 @@ func handleService(systemd *dbus.Conn, s cue.Service) error {
 	}
 	unitStr := buf.String()
 
-	unitP := filepath.Join(common.UnitPath, s.Name + ".service")
+	unitP := filepath.Join(common.UnitPath, "sloop-service-" + s.Name + ".service")
 
 	err = os.WriteFile(unitP, []byte(unitStr), 0644)
 	if err != nil {
@@ -476,51 +476,31 @@ func getCurUnits() ([]string, error) {
 	return curUnits, nil
 }
 
-func getCurServices() ([]string, error) {
+func getCur(kind string) ([]string, error) {
 	curUnits, err := getCurUnits()
 	if err != nil {
 		return  nil, err
 	}
-	curServices := lo.FilterMap(curUnits, func(e string, i int) (string, bool) {
-		if strings.HasPrefix(e, "sloop-bridge-") {
+	curKind := lo.FilterMap(curUnits, func(e string, i int) (string, bool) {
+		if !strings.HasPrefix(e, "sloop-" + kind + "-") {
 			return "", false
 		}
-		if strings.HasPrefix(e, "sloop-host-") {
-			return "", false
-		}
-		return strings.TrimSuffix(e, ".service"), true
+		trimmed := strings.TrimPrefix(e, "sloop-" + kind + "-")
+		return strings.TrimSuffix(trimmed, ".service"), true
 	})
-	return curServices, nil
+	return curKind, nil
+}
+
+func getCurServices() ([]string, error) {
+	return getCur("service")
 }
 
 func getCurBridges() ([]string, error) {
-	curUnits, err := getCurUnits()
-	if err != nil {
-		return  nil, err
-	}
-	curBridges := lo.FilterMap(curUnits, func(e string, i int) (string, bool) {
-		if !strings.HasPrefix(e, "sloop-bridge-") {
-			return "", false
-		}
-		trimmed := strings.TrimPrefix(e, "sloop-bridge-")
-		return strings.TrimSuffix(trimmed, ".service"), true
-	})
-	return curBridges, nil
+	return getCur("bridge")
 }
 
 func getCurHosts() ([]string, error) {
-	curUnits, err := getCurUnits()
-	if err != nil {
-		return  nil, err
-	}
-	curHosts := lo.FilterMap(curUnits, func(e string, i int) (string, bool) {
-		if !strings.HasPrefix(e, "sloop-host-") {
-			return "", false
-		}
-		trimmed := strings.TrimPrefix(e, "sloop-host-")
-		return strings.TrimSuffix(trimmed, ".service"), true
-	})
-	return curHosts, nil
+	return getCur("host")
 }
 
 func Create(config cue.Config) error {

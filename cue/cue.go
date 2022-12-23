@@ -133,9 +133,9 @@ const goTypesStr = `
 	if host == null {
 		$host: ""
 	}
-	$wants: [ for w in wants {(w & string) | (w.name + ".service")}]
-	$requires: [ for r in requires {(r & string) | (r.name + ".service")}]
-	$after: [ for a in after {(a & string) | (a.name + ".service")}]
+	$wants: [ for w in wants {(w & string) | ("sloop-service-" + w.name + ".service")}]
+	$requires: [ for r in requires {(r & string) | ("sloop-service-" + r.name + ".service")}]
+	$after: [ for a in after {(a & string) | ("sloop-service-" + a.name + ".service")}]
 }
 #GoNetdev: #Netdev & {
 	bridge: #Bridge
