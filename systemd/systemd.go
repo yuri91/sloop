@@ -13,6 +13,7 @@ import (
 	"yuri91/sloop/common"
 	"yuri91/sloop/cue"
 	"yuri91/sloop/image"
+	"yuri91/sloop/catatonit"
 
 	"github.com/coreos/go-systemd/v22/dbus"
 	"github.com/samber/lo"
@@ -33,6 +34,19 @@ func getImagePath(from string) string {
 func getImageRootPath(from string) string {
 	path := filepath.Join(getImagePath(from), "rootfs")
 	return path
+}
+
+func handleInit() error {
+	p := filepath.Join(common.ImagePath, "catatonit")
+	oldInit, _ := os.ReadFile(p)
+	if bytes.Equal(oldInit, catatonit.Bin) {
+		return nil
+	}
+	err := os.WriteFile(p, catatonit.Bin, 0777)
+	if err != nil {
+		return CreateImageError.Wrap(err, "failed to write catatonit binary")
+	}
+	return nil
 }
 
 func handleVolume(v cue.Volume) error {
@@ -80,11 +94,15 @@ After = {{$u}}
 Slice=sloop.slice
 Type = notify
 NotifyAccess=all
+RestartForceExitStatus=133
+SuccessExitStatus=133
+KillMode=mixed
 ExecStart = systemd-nspawn \
 	--volatile=overlay \
-	-a \
 	--keep-unit \
 	--register=no \
+	--bind={{.InitPath}}:/catatonit \
+	--kill-signal=SIGTERM \
 	--oci-bundle={{.BundleDir}} \
 	-M {{.Name}} \
 {{- if ne .Host "" }}
@@ -99,7 +117,7 @@ ExecStart = systemd-nspawn \
 {{- if ne .Capabilities "" }}
 	--capability={{.Capabilities}} \
 {{- end }}
-	{{.Cmd}}
+	/catatonit {{.Cmd}}
 
 {{ if eq .Type "notify" -}}
 Environment=NOTIFY_SOCKET=
@@ -180,6 +198,7 @@ var bridgeTemplate *template.Template = template.Must(template.New("bridge").Fun
 
 type UnitConf struct {
 	Name string
+	InitPath string
 	BundleDir string
 	ServiceDir string
 	Binds map[string]string
@@ -376,6 +395,7 @@ func handleService(systemd *dbus.Conn, s cue.Service) error {
 	var buf bytes.Buffer
 	conf := UnitConf {
 		Name: s.Name,
+		InitPath: filepath.Join(common.ImagePath, "catatonit"),
 		BundleDir: serviceDir,
 		ServiceDir: filepath.Join(common.ServicePath, s.Name),
 		Binds: bindsMap,
@@ -625,6 +645,11 @@ func Create(config cue.Config) error {
 		return err
 	}
 	curHosts, err := getCurHosts()
+	if err != nil {
+		return err
+	}
+
+	err = handleInit()
 	if err != nil {
 		return err
 	}
