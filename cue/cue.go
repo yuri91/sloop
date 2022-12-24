@@ -99,8 +99,14 @@ const goTypesStr = `
 	$files: {
 		for p,f in files {
 			"\(p)": {
-				content: string & (f.content | f)
-				permissions: uint16 & (f.permissions | *0o666)
+				if f.content != _|_ {
+					content: f.content
+					permissions: f.permissions
+				}
+				if f.content == _|_ {
+					content: f
+					permissions: 0o666
+				}
 			}
 		}
 	}
