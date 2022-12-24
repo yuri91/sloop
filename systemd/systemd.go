@@ -124,7 +124,7 @@ Environment=NOTIFY_SOCKET=
 {{ end -}}
 
 [Install]
-WantedBy=default.target
+WantedBy=sloop.target
 `
 
 const hostTemplateStr = `
@@ -165,7 +165,7 @@ ExecStop = ip link delete {{$n.Name}}
 ExecStop = ip netns delete sloop-{{.Name}}
 
 [Install]
-WantedBy=default.target
+WantedBy=sloop.target
 `
 
 const bridgeTemplateStr = `
@@ -189,7 +189,7 @@ ExecStop = iptables -t nat -D POSTROUTING -s {{.Ip}}/16 ! -o {{.Name}} -j MASQUE
 ExecStop = ip link delete {{.Name}}
 
 [Install]
-WantedBy=default.target
+WantedBy=sloop.target
 `
 
 var unitTemplate *template.Template = template.Must(template.New("unit").Funcs(template.FuncMap{}).Parse(unitTemplateStr))
@@ -281,7 +281,7 @@ func handleHost(systemd *dbus.Conn, h cue.Host) (bool, error) {
 	}
 
 	//enable service
-	_, _, err = systemd.EnableUnitFilesContext(context.Background(), []string{unitP}, false, true)
+	_, err = systemd.LinkUnitFilesContext(context.Background(), []string{unitP}, false, true)
 	if err != nil {
 		return false, RuntimeServiceError.Wrap(err, "cannot enable unit for host %s", h.Name)
 	}
@@ -499,7 +499,10 @@ func handleSlice(systemd *dbus.Conn) (bool, error) {
 const targetStr string = `
 [Unit]
 Description=Sloop target
-Requires=multi-user.target
+Before=multi-user.target
+
+[Install]
+WantedBy=multi-user.target
 `
 
 func handleTarget(systemd *dbus.Conn) (bool, error) {
