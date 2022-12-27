@@ -10,10 +10,10 @@ import (
 	"path/filepath"
 	"strings"
 	"text/template"
+	"yuri91/sloop/catatonit"
 	"yuri91/sloop/common"
 	"yuri91/sloop/cue"
 	"yuri91/sloop/image"
-	"yuri91/sloop/catatonit"
 
 	"github.com/coreos/go-systemd/v22/dbus"
 	"github.com/samber/lo"
@@ -104,6 +104,7 @@ SuccessExitStatus=133
 {{- end }}
 KillMode=mixed
 ExecStart = systemd-nspawn \
+	--quiet \
 	--volatile=overlay \
 	--keep-unit \
 	--register=no \
@@ -123,7 +124,7 @@ ExecStart = systemd-nspawn \
 {{- if ne .Capabilities "" }}
 	--capability={{.Capabilities}} \
 {{- end }}
-	/catatonit {{.Cmd}}
+	/catatonit -- {{.Cmd}}
 
 {{ if eq .Type "notify" -}}
 Environment=NOTIFY_SOCKET=
