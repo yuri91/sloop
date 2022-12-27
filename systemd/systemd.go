@@ -127,9 +127,9 @@ ExecStart = systemd-nspawn \
 {{- end }}
 	/catatonit -- {{.Cmd}}
 
-{{ if eq .Type "notify" -}}
+{{- if eq .Type "notify" }}
 Environment=NOTIFY_SOCKET=
-{{ end -}}
+{{- end }}
 
 {{- if .Enable }}
 [Install]
