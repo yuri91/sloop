@@ -40,6 +40,7 @@ type Service struct {
 	Ports []PortBinding `json:"$ports"`
 	Host string `json:"$host"`
 	Type string
+	Enable bool
 	Wants []string `json:"$wants"`
 	Requires []string `json:"$requires"`
 	After []string `json:"$after"`

@@ -123,8 +123,10 @@ ExecStart = systemd-nspawn \
 Environment=NOTIFY_SOCKET=
 {{ end -}}
 
+{{- if .Enable }}
 [Install]
 WantedBy=sloop.target
+{{- end }}
 `
 
 const hostTemplateStr = `
@@ -206,6 +208,7 @@ type UnitConf struct {
 	Cmd string
 	Host string
 	Type string
+	Enable bool
 	Wants []string
 	Requires []string
 	After []string
@@ -403,6 +406,7 @@ func handleService(systemd *dbus.Conn, s cue.Service) error {
 		Cmd: cmdStr,
 		Host: s.Host,
 		Type: s.Type,
+		Enable: s.Enable,
 		Wants: s.Wants,
 		Requires: s.Requires,
 		After: s.After,
@@ -421,7 +425,11 @@ func handleService(systemd *dbus.Conn, s cue.Service) error {
 	}
 
 	//enable service
-	_, _, err = systemd.EnableUnitFilesContext(context.Background(), []string{unitP}, false, true)
+	if s.Enable {
+		_, _, err = systemd.EnableUnitFilesContext(context.Background(), []string{unitP}, false, true)
+	} else {
+		_, err = systemd.LinkUnitFilesContext(context.Background(), []string{unitP}, false, true)
+	}
 	if err != nil {
 		return RuntimeServiceError.Wrap(err, "cannot enable unit for service %s", s.Name)
 	}
@@ -760,6 +768,9 @@ func Create(config cue.Config) error {
 	}
 
 	for _, s := range config.Services {
+		if !s.Enable {
+			continue
+		}
 		//start service
 		err = startService(systemd, "sloop-service-" + s.Name + ".service")
 		if err != nil {

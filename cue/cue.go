@@ -60,6 +60,7 @@ const typesStr = `
 	host: #Host | *null
 	capabilities: [...string] | *[]
 	type: "notify" | *"simple"
+	enable: bool | *true
 	wants: [...#Dependency]
 	requires: [...#Dependency]
 	after: [...#Dependency]
