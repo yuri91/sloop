@@ -112,6 +112,7 @@ ExecStart = systemd-nspawn \
 	--kill-signal=SIGTERM \
 	--oci-bundle={{.BundleDir}} \
 	-M {{.Name}} \
+	--resolv-conf=bind-uplink \
 {{- if ne .Host "" }}
 	--network-namespace-path=/var/run/netns/sloop-{{.Host}} \
 {{- end }}
