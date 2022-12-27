@@ -1,6 +1,11 @@
 package cmd
 
 import (
+	"fmt"
+	"os"
+
+	"cuelang.org/go/cue/errors"
+	"github.com/joomcode/errorx"
 	"github.com/spf13/cobra"
 
 	"yuri91/sloop/cue"
@@ -24,11 +29,16 @@ func init() {
 
 func run() error {
 	config, err := cue.GetConfig(".")
+	if errx, ok := err.(*errorx.Error); ok && cue.CueErrors.IsNamespaceOf(errx.Type()) {
+		fmt.Printf("Error in configuration: [%s] %s \n", errx.Type().FullName(), errx.Message())
+		fmt.Println(errors.Details(errx.Cause(), nil))
+		os.Exit(1)
+	}
 	if err != nil {
 		return err
 	}
 	//err = podman.Execute(config);
-	err = systemd.Create(config)
+	err = systemd.Create(*config)
 	if err != nil {
 		return err
 	}

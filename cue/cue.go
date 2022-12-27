@@ -7,17 +7,6 @@ import (
 	"cuelang.org/go/cue/load"
 )
 
-type cueError struct {
-	err error
-	msg string
-}
-func (e cueError) Error() string {
-	return e.msg + ": " + e.err.Error()
-}
-func wrapCueError(err error, msg string) (Config, cueError) {
-	return Config{}, cueError{err, msg}
-}
-
 const typesStr = `
 #Volume: {
 	name: string
@@ -176,7 +165,7 @@ $services: {
 }
 `
 
-func GetConfig(path string) (Config, error) {
+func GetConfig(path string) (*Config, error) {
 	// We need a cue.Context, the New'd return is ready to use
 	ctx := cuecontext.New()
 
@@ -193,30 +182,30 @@ func GetConfig(path string) (Config, error) {
 	// check for errors on the instance
 	// these are typically parsing errors
 	if bi.Err != nil {
-		return wrapCueError(bi.Err, "Error during load")
+		return nil, LoadError.Wrap(bi.Err, "Error during load")
 	}
 
 	// Use cue.Context to turn build.Instance to cue.Instance
 	value := ctx.BuildInstance(bi, cue.Scope(types))
 	if value.Err() != nil {
-		return wrapCueError(value.Err(), "Error during build")
+		return nil, BuildError.Wrap(value.Err(), "Error during build")
 	}
 
 	value = value.Unify(constraints)
 	if value.Err() != nil {
-		return wrapCueError(value.Err(), "Error during constraints check")
+		return nil, ConstraintError.Wrap(value.Err(), "Error during constrain")
 	}
 
 	scope := value.Unify(types)
 	value = ctx.CompileString(goTypesStr, cue.Filename("sloop_go_types.cue"), cue.Scope(scope))
 	if value.Err() != nil {
-		return wrapCueError(value.Err(), "Error during go type conversion")
+		return nil, ConvertError.Wrap(value.Err(), "Error go type conversion")
 	}
 
 	// Validate the value
 	err := value.Validate(cue.Concrete(true), cue.ResolveReferences(true))
 	if err != nil {
-		return wrapCueError(err, "Error during validate")
+		return nil, ValidateError.Wrap(err, "Error in validation")
 	}
 
 	//syn := value.Syntax(
@@ -232,7 +221,7 @@ func GetConfig(path string) (Config, error) {
 	conf := Config{}
 	err = value.Decode(&conf)
 	if err != nil {
-		return wrapCueError(err, "Error during decoding to go type")
+		return nil, DecodeError.Wrap(err, "Error during decoding into go type")
 	}
-	return conf,nil
+	return &conf,nil
 }
