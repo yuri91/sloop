@@ -351,6 +351,11 @@ func handleServiceFiles(systemd *dbus.Conn, s cue.Service) (bool, error) {
 	if s.Type == "notify" {
 		meta.Process.Env = append(meta.Process.Env, "NOTIFY_SOCKET=/run/systemd/notify")
 	}
+	if s.Host == "" {
+		meta.Linux.Namespaces = lo.Filter(meta.Linux.Namespaces, func(n specs.LinuxNamespace, i int) bool {
+			return n.Type != "network"
+		})
+	}
 	meta.Process.Capabilities.Bounding = append(meta.Process.Capabilities.Bounding, "CAP_CHOWN")
 	meta.Root.Path = getImageRootPath(s.From)
 
