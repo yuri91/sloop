@@ -306,7 +306,7 @@ func handleServiceFiles(systemd *dbus.Conn, s cue.Service) (bool, error) {
 	// if the file does not exists, oldConf will be nil
 	oldConf, _ := os.ReadFile(confP)
 
-	newConf, err := json.Marshal(s)
+	newConf, err := json.MarshalIndent(s, "", "\t")
 	if err != nil {
 		return false, CreateServiceError.Wrap(err, "cannot marshal config %s", string(newConf))
 	}
@@ -353,7 +353,7 @@ func handleServiceFiles(systemd *dbus.Conn, s cue.Service) (bool, error) {
 	meta.Process.Capabilities.Bounding = append(meta.Process.Capabilities.Bounding, "CAP_CHOWN")
 	meta.Root.Path = getImageRootPath(s.From)
 
-	metaB, err := json.Marshal(meta)
+	metaB, err := json.MarshalIndent(meta, "", "\t")
 	if err != nil {
 		return false, CreateImageError.Wrap(err, "cannot marshal OCI config for service %s", s.Name)
 	}
