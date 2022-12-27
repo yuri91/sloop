@@ -59,7 +59,7 @@ const typesStr = `
 	ports: [...#PortBinding]
 	host: #Host | *null
 	capabilities: [...string] | *[]
-	type: "notify" | *"simple"
+	type: "notify" | "oneshot" | *"simple"
 	enable: bool | *true
 	wants: [...#Dependency]
 	requires: [...#Dependency]

@@ -92,10 +92,16 @@ After = {{$u}}
 
 [Service]
 Slice=sloop.slice
+{{- if eq .Type "oneshot" }}
+Type = oneshot
+{{- else }}
 Type = notify
+{{- end }}
 NotifyAccess=all
+{{- if ne .Type "oneshot" }}
 RestartForceExitStatus=133
 SuccessExitStatus=133
+{{- end }}
 KillMode=mixed
 ExecStart = systemd-nspawn \
 	--volatile=overlay \
