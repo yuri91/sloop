@@ -16,6 +16,7 @@ import (
 	"yuri91/sloop/image"
 
 	"github.com/coreos/go-systemd/v22/dbus"
+	"github.com/opencontainers/runtime-spec/specs-go"
 	"github.com/samber/lo"
 )
 
