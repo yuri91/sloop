@@ -799,10 +799,12 @@ func Create(config cue.Config) error {
 	return nil
 }
 
-func Purge() error {
-	err := os.RemoveAll(common.ImagePath)
-	if err != nil {
-		return RemoveImageError.Wrap(err, "cannot remove image directory")
+func Purge(images bool) error {
+	if images {
+		err := os.RemoveAll(common.ImagePath)
+		if err != nil {
+			return RemoveImageError.Wrap(err, "cannot remove image directory")
+		}
 	}
 
 	systemd, err := dbus.NewSystemConnectionContext(context.Background())

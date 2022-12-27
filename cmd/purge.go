@@ -16,12 +16,13 @@ var (
 		},
 	}
 )
-
+var purgeImages bool
 func init() {
+	purgeCmd.PersistentFlags().BoolVarP(&purgeImages, "images", "i", false, "also purge cached images")
 }
 
 func purge() error {
-	err := systemd.Purge();
+	err := systemd.Purge(purgeImages);
 	if err != nil {
 		return err
 	}
