@@ -38,13 +38,20 @@ const typesStr = `
 	service: uint16
 } | uint16
 
-#Service: {
-	name:  =~ "^[A-Za-z0-9-]+$"
-	cmd: [...string]
+#Image: {
 	from: string
 	files: [string]:  #File
 	env: [string]:    string
 	volumes: [string]: #Volume
+}
+#Exec: {
+	start: [...string] | *[]
+	reload: [...string] | *[]
+}
+#Service: {
+	name:  =~ "^[A-Za-z0-9-]+$"
+	exec: #Exec
+	image: #Image
 	ports: [...#PortBinding]
 	host: #Host | *null
 	capabilities: [...string] | *[]
@@ -71,7 +78,7 @@ $host: [Name=_]: #Host & {name: string | *strings.Replace(Name,"_","-",-1)}
 $service: [Name=_]: S=#Service & {
 	name: string | *strings.Replace(Name,"_","-",-1)
 	_volumeCheck: {
-		for k, v in S.volumes {
+		for k, v in S.image.volumes {
 			"\(v.name).is_in_$volume": [ for k1, v1 in $volume if v1.name == v.name {v1}] & [v]
 		}
 	}
@@ -83,56 +90,6 @@ $service: [Name=_]: S=#Service & {
 }
 `
 const goTypesStr = `
-#GoService: #Service & {
-	files: [string]:  #File
-	$files: [string]:  #File
-	$files: {
-		for p,f in files {
-			"\(p)": {
-				if f.content != _|_ {
-					content: f.content
-					permissions: f.permissions
-				}
-				if f.content == _|_ {
-					content: f
-					permissions: 0o666
-				}
-			}
-		}
-	}
-	volumes: [string]: #Volume
-	host: #Host | *null
-	ports: [...#PortBinding]
-	wants: [...#Dependency]
-	requires: [...#Dependency]
-	after: [...#Dependency]
-
-	$ports: [
-		for p in ports {
-			{
-				host:  p.host | p
-				service: p.service | p
-			}
-		}
-	]
-	$volumes: [
-		for p,v in volumes {
-			{
-				name: v.name
-				dest: p
-			}
-		}
-	]
-	if host != null {
-		$host: host.name
-	}
-	if host == null {
-		$host: ""
-	}
-	$wants: [ for w in wants {(w & string) | ("sloop-service-" + w.name + ".service")}]
-	$requires: [ for r in requires {(r & string) | ("sloop-service-" + r.name + ".service")}]
-	$after: [ for a in after {(a & string) | ("sloop-service-" + a.name + ".service")}]
-}
 #GoNetdev: #Netdev & {
 	bridge: #Bridge
 	$bridge: bridge.name
@@ -159,8 +116,55 @@ $hosts: {
 	}
 }
 $services: {
-	for _, v in $service {
-		"\(v.name)": v&#GoService
+	for _, s in $service {
+		"\(s.name)": {
+			name: s.name
+			type: s.type
+			exec: s.exec
+			image: {
+				from: s.image.from
+				env: s.image.env
+				files: {
+					for p,f in s.image.files {
+						"\(p)": {
+							if f.content != _|_ {
+								content: f.content
+								permissions: f.permissions
+							}
+							if f.content == _|_ {
+								content: f
+								permissions: 0o666
+							}
+						}
+					}
+				}
+				volumes: [
+					for p,v in s.image.volumes {
+						{
+							name: v.name
+							dest: p
+						}
+					}
+				]
+			}
+			ports: [
+				for p in s.ports {
+					{
+						host:  p.host | p
+						service: p.service | p
+					}
+				}
+			]
+			if s.host != null {
+				host: host.name
+			}
+			if s.host == null {
+				host: ""
+			}
+			wants: [ for w in s.wants {(w & string) | ("sloop-service-" + w.name + ".service")}]
+			requires: [ for r in s.requires {(r & string) | ("sloop-service-" + r.name + ".service")}]
+			after: [ for a in s.after {(a & string) | ("sloop-service-" + a.name + ".service")}]
+		}
 	}
 }
 `

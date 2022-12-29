@@ -29,21 +29,28 @@ type VolumeMapping struct {
 	Name string
 	Dest string
 }
+type Image struct {
+	From string
+	Files map[string]File
+	Env map[string]string
+	Volumes []VolumeMapping
+}
+type Exec struct {
+	Start []string
+	Reload []string
+}
 type Service struct {
 	Name  string
-	Cmd []string
-	From string
-	Files map[string]File `json:"$files"`
-	Env map[string]string
+	Image Image
+	Exec Exec
 	Capabilities []string
-	Volumes []VolumeMapping `json:"$volumes"`
-	Ports []PortBinding `json:"$ports"`
-	Host string `json:"$host"`
+	Ports []PortBinding
+	Host string
 	Type string
 	Enable bool
-	Wants []string `json:"$wants"`
-	Requires []string `json:"$requires"`
-	After []string `json:"$after"`
+	Wants []string
+	Requires []string
+	After []string
 }
 type Config struct {
 	Volumes map[string]Volume `json:"$volumes"`

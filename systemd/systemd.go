@@ -50,6 +50,28 @@ func handleInit() error {
 	return nil
 }
 
+const nsenterStr string = `
+#!/bin/bash
+
+service=$1
+cmd=$2
+pid=
+env=
+exec nsenter -a -t ${pid} ${cmd}
+`
+func handleNsenter() error {
+	p := filepath.Join(common.ImagePath, "nsenter")
+	oldInit, _ := os.ReadFile(p)
+	if bytes.Equal(oldInit, []byte(nsenterStr)) {
+		return nil
+	}
+	err := os.WriteFile(p, []byte(nsenterStr), 0777)
+	if err != nil {
+		return CreateImageError.Wrap(err, "failed to write nsenter script")
+	}
+	return nil
+}
+
 func handleVolume(v cue.Volume) error {
 	if v.Name[0] == '/' {
 		return nil
@@ -126,7 +148,11 @@ ExecStart = systemd-nspawn \
 {{- if ne .Capabilities "" }}
 	--capability={{.Capabilities}} \
 {{- end }}
-	/catatonit -- {{.Cmd}}
+	/catatonit -- {{.Start}}
+
+{{- if ne .Reload "" }}
+ExecReload = {{.InitPath}}/nsenter {{.Name}} {{.Reload}}
+{{- end }}
 
 {{- if eq .Type "notify" }}
 Environment=NOTIFY_SOCKET=
@@ -214,7 +240,8 @@ type UnitConf struct {
 	ServiceDir string
 	Binds map[string]string
 	Capabilities string
-	Cmd string
+	Start string
+	Reload string
 	Host string
 	Type string
 	Enable bool
@@ -330,7 +357,7 @@ func handleServiceFiles(systemd *dbus.Conn, s cue.Service) (bool, error) {
 		return false, CreateServiceError.Wrap(err, "cannot create service %s directory", s.Name)
 	}
 
-	for path, file := range s.Files {
+	for path, file := range s.Image.Files {
 		fullP := filepath.Join(p, "files", path)
 		if err := os.MkdirAll(filepath.Dir(fullP), 0777); err != nil {
 			return false, err
@@ -341,11 +368,11 @@ func handleServiceFiles(systemd *dbus.Conn, s cue.Service) (bool, error) {
 		}
 	}
 
-	meta, err := image.ReadMetadata(getImagePath(s.From))
+	meta, err := image.ReadMetadata(getImagePath(s.Image.From))
 	if err != nil {
 		return false, err
 	}
-	for k,v := range s.Env {
+	for k,v := range s.Image.Env {
 		meta.Process.Env = append(meta.Process.Env, strings.Join([]string{k,v}, "="))
 	}
 	if s.Type == "notify" {
@@ -357,7 +384,7 @@ func handleServiceFiles(systemd *dbus.Conn, s cue.Service) (bool, error) {
 		})
 	}
 	meta.Process.Capabilities.Bounding = append(meta.Process.Capabilities.Bounding, "CAP_CHOWN")
-	meta.Root.Path = getImageRootPath(s.From)
+	meta.Root.Path = getImageRootPath(s.Image.From)
 
 	metaB, err := json.MarshalIndent(meta, "", "\t")
 	if err != nil {
@@ -379,7 +406,7 @@ func handleServiceFiles(systemd *dbus.Conn, s cue.Service) (bool, error) {
 func handleService(systemd *dbus.Conn, s cue.Service) error {
 	serviceDir := filepath.Join(common.ServicePath, s.Name)
 	bindsMap := make(map[string]string)
-	for _,v := range s.Volumes {
+	for _,v := range s.Image.Volumes {
 		var n string
 		if v.Name[0] != '/' {
 			n = filepath.Join(common.VolumePath, v.Name)
@@ -388,22 +415,26 @@ func handleService(systemd *dbus.Conn, s cue.Service) error {
 		}
 		bindsMap[n] = v.Dest
 	}
-	for path := range s.Files {
+	for path := range s.Image.Files {
 		fullP := filepath.Join(common.ServicePath, s.Name, "files", path)
 		bindsMap[fullP] = path
 	}
 
-	cmdVec := s.Cmd
-	if len(cmdVec) == 0 {
-		meta, err := image.ReadMetadata(getImagePath(s.From))
+	startVec := s.Exec.Start
+	if len(startVec) == 0 {
+		meta, err := image.ReadMetadata(getImagePath(s.Image.From))
 		if err != nil {
-			return CreateServiceError.Wrap(err, "failed to get metadata for image %s for service %s", s.From, s.Name)
+			return CreateServiceError.Wrap(err, "failed to get metadata for image %s for service %s", s.Image.From, s.Name)
 		}
-		cmdVec = meta.Process.Args
+		startVec = meta.Process.Args
 	}
-	cmdStr := ""
-	for _,c := range cmdVec {
-		cmdStr += fmt.Sprintf("%q ", c)
+	startStr := ""
+	for _,c := range startVec {
+		startStr += fmt.Sprintf("%q ", c)
+	}
+	reloadStr := ""
+	for _,c := range s.Exec.Reload {
+		reloadStr += fmt.Sprintf("%q ", c)
 	}
 	if s.Host != "" {
 		s.Requires = append(s.Requires, "sloop-host-" + s.Host + ".service")
@@ -417,7 +448,8 @@ func handleService(systemd *dbus.Conn, s cue.Service) error {
 		ServiceDir: filepath.Join(common.ServicePath, s.Name),
 		Binds: bindsMap,
 		Capabilities: strings.Join(s.Capabilities, ","),
-		Cmd: cmdStr,
+		Start: startStr,
+		Reload: reloadStr,
 		Host: s.Host,
 		Type: s.Type,
 		Enable: s.Enable,
@@ -566,7 +598,7 @@ func startService(systemd *dbus.Conn, service string) error {
 
 func gatherImages(services map[string]cue.Service) []string {
 	imgMap := lo.MapEntries(services, func(n string, s cue.Service) (string, bool) {
-		return s.From, true
+		return s.Image.From, true
 	})
 	return lo.Keys(imgMap)
 }
