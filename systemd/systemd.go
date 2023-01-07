@@ -300,32 +300,12 @@ func handleBridge(systemd *dbus.Conn, b cue.Bridge) (bool, error) {
 	unitStr := buf.String()
 
 	unitName := "sloop-bridge-" + b.Name + ".service"
-	unitP := filepath.Join(common.UnitPath, unitName)
 
-	// If the file is not there, oldUnit will be null
-	oldUnit, _ := os.ReadFile(unitP)
-	if unitStr == string(oldUnit) {
-		return false, nil
-	}
-
-	if len(oldUnit) != 0 {
-		err = stopDisableDeleteUnit(systemd, unitName)
-		if err != nil {
-			return false, err
-		}
-	}
-
-	err = os.WriteFile(unitP, []byte(unitStr), 0644)
+	changed, err := writeLinkUnit(systemd, unitName, unitStr, false)
 	if err != nil {
-		return false, CreateServiceError.Wrap(err, "failed to write unit file for bridge %s", b.Name)
+		return false, err
 	}
-
-	//link service
-	_, err = systemd.LinkUnitFilesContext(context.Background(), []string{unitP}, false, true)
-	if err != nil {
-		return false, RuntimeServiceError.Wrap(err, "cannot enable unit for bridge %s", b.Name)
-	}
-	return true, nil
+	return changed, nil
 }
 
 func handleHost(systemd *dbus.Conn, h cue.Host) (bool, error) {
@@ -337,32 +317,12 @@ func handleHost(systemd *dbus.Conn, h cue.Host) (bool, error) {
 	unitStr := buf.String()
 
 	unitName := "sloop-host-" + h.Name + ".service"
-	unitP := filepath.Join(common.UnitPath, unitName)
 
-	// If the file is not there, oldUnit will be null
-	oldUnit, _ := os.ReadFile(unitP)
-	if unitStr == string(oldUnit) {
-		return false, nil
-	}
-
-	if len(oldUnit) != 0 {
-		err = stopDisableDeleteUnit(systemd, unitName)
-		if err != nil {
-			return false, err
-		}
-	}
-
-	err = os.WriteFile(unitP, []byte(unitStr), 0644)
+	changed, err := writeLinkUnit(systemd, unitName, unitStr, false)
 	if err != nil {
-		return false, CreateServiceError.Wrap(err, "failed to write unit file for host %s", h.Name)
+		return false, err
 	}
-
-	//enable service
-	_, err = systemd.LinkUnitFilesContext(context.Background(), []string{unitP}, false, true)
-	if err != nil {
-		return false, RuntimeServiceError.Wrap(err, "cannot enable unit for host %s", h.Name)
-	}
-	return true, nil
+	return changed, nil
 }
 
 func handleServiceFiles(systemd *dbus.Conn, s cue.Service) (bool, error) {
@@ -380,7 +340,7 @@ func handleServiceFiles(systemd *dbus.Conn, s cue.Service) (bool, error) {
 		return false, nil
 	}
 
-	err = stopDisableDeleteUnit(systemd, "sloop-service-" + s.Name + ".service")
+	err = stopUnit(systemd, "sloop-service-" + s.Name + ".service")
 	if err != nil {
 		return false, err
 	}
@@ -441,7 +401,7 @@ func handleServiceFiles(systemd *dbus.Conn, s cue.Service) (bool, error) {
 	return true, nil
 }
 
-func handleService(systemd *dbus.Conn, s cue.Service) error {
+func handleService(systemd *dbus.Conn, s cue.Service) (bool, error) {
 	serviceDir := filepath.Join(common.ServicePath, s.Name)
 	bindsMap := make(map[string]string)
 	for _,v := range s.Image.Volumes {
@@ -462,7 +422,7 @@ func handleService(systemd *dbus.Conn, s cue.Service) error {
 	if len(startVec) == 0 {
 		meta, err := image.ReadMetadata(getImagePath(s.Image.From))
 		if err != nil {
-			return CreateServiceError.Wrap(err, "failed to get metadata for image %s for service %s", s.Image.From, s.Name)
+			return false, CreateServiceError.Wrap(err, "failed to get metadata for image %s for service %s", s.Image.From, s.Name)
 		}
 		startVec = meta.Process.Args
 	}
@@ -497,66 +457,124 @@ func handleService(systemd *dbus.Conn, s cue.Service) error {
 	}
 	err := unitTemplate.Execute(&buf, conf)
 	if err != nil {
-		return CreateServiceError.Wrap(err, "failed to execute template for service %s", s.Name)
+		return false, CreateServiceError.Wrap(err, "failed to execute template for service %s", s.Name)
 	}
 	unitStr := buf.String()
 
-	unitP := filepath.Join(common.UnitPath, "sloop-service-" + s.Name + ".service")
-
-	err = os.WriteFile(unitP, []byte(unitStr), 0644)
+	changed, err := writeLinkUnit(systemd, "sloop-service-"+s.Name+".service", unitStr, s.Enable)
 	if err != nil {
-		return CreateServiceError.Wrap(err, "failed to write unit file for service %s", s.Name)
+		return false, err;
 	}
 
-	//enable service
-	if s.Enable {
-		_, _, err = systemd.EnableUnitFilesContext(context.Background(), []string{unitP}, false, true)
-	} else {
-		_, err = systemd.LinkUnitFilesContext(context.Background(), []string{unitP}, false, true)
-	}
-	if err != nil {
-		return RuntimeServiceError.Wrap(err, "cannot enable unit for service %s", s.Name)
-	}
-	return nil
+	return changed, nil
 }
 
-func handleTimer(systemd *dbus.Conn, t cue.Timer) error {
+func handleTimer(systemd *dbus.Conn, t cue.Timer) (bool, error) {
 	var buf bytes.Buffer
 	err := timerTemplate.Execute(&buf, t)
 	if err != nil {
-		return CreateServiceError.Wrap(err, "failed to execute template for timer %s", t.Name)
+		return false, CreateServiceError.Wrap(err, "failed to execute template for timer %s", t.Name)
 	}
 	timerStr := buf.String()
 	err = timerServiceTemplate.Execute(&buf, t)
 	if err != nil {
-		return CreateServiceError.Wrap(err, "failed to execute template for timer service %s", t.Name)
+		return false, CreateServiceError.Wrap(err, "failed to execute template for timer service %s", t.Name)
 	}
 	timerServiceStr := buf.String()
 
 	timerP := filepath.Join(common.UnitPath, "sloop-timer-" + t.Name + ".timer")
 	serviceP := filepath.Join(common.UnitPath, "sloop-timer-" + t.Name + ".service")
 
-	err = os.WriteFile(timerP, []byte(timerStr), 0644)
-	if err != nil {
-		return CreateServiceError.Wrap(err, "failed to write unit file for timer %s", t.Name)
-	}
-	err = os.WriteFile(serviceP, []byte(timerServiceStr), 0644)
-	if err != nil {
-		return CreateServiceError.Wrap(err, "failed to write unit file for timer service %s", t.Name)
+	oldTimer, _ := os.ReadFile(timerP)
+	oldService, _ := os.ReadFile(serviceP)
+	if timerServiceStr == string(oldTimer) && timerStr == string(oldService) {
+		return false, nil
 	}
 
-	_, _, err = systemd.EnableUnitFilesContext(context.Background(), []string{timerP}, false, true)
+	timerChanged, err := writeLinkUnit(systemd, "sloop-timer-"+t.Name+".timer", timerStr, true)
 	if err != nil {
-		return RuntimeServiceError.Wrap(err, "cannot enable unit for timer %s", t.Name)
+		return false, err;
 	}
-	_, err = systemd.LinkUnitFilesContext(context.Background(), []string{serviceP}, false, true)
+	unitChanged, err := writeLinkUnit(systemd, "sloop-timer-"+t.Name+".service", timerServiceStr, false)
 	if err != nil {
-		return RuntimeServiceError.Wrap(err, "cannot link unit for timer service %s", t.Name)
+		return false, err;
 	}
-	return nil
+
+	return (timerChanged || unitChanged), nil
 }
 
-func stopDisableDeleteUnit(systemd *dbus.Conn, name string) error {
+
+const sliceStr string = `
+[Unit]
+Description=Slice used to run sloop services
+Before=slices.target
+
+[Slice]
+MemoryAccounting=true
+IOAccounting=true
+CPUAccounting=true
+`
+
+func handleSlice(systemd *dbus.Conn) (bool, error) {
+	changed, err := writeLinkUnit(systemd, "sloop.slice", sliceStr, false)
+	if err != nil {
+		return false, err
+	}
+	return changed, nil
+}
+
+const targetStr string = `
+[Unit]
+Description=Sloop target
+Before=multi-user.target
+
+[Install]
+WantedBy=multi-user.target
+`
+
+func handleTarget(systemd *dbus.Conn) (bool, error) {
+	changed, err := writeLinkUnit(systemd, "sloop.target", targetStr, true)
+	if err != nil {
+		return false, err
+	}
+	return changed, nil
+}
+
+
+func startUnit(systemd *dbus.Conn, service string) error {
+	wait := make(chan string)
+	systemd.StartUnitContext(context.Background(), service, "replace", wait)
+	fmt.Printf("starting %s...\n", service)
+	res := <- wait
+	if res != "done" {
+		return RuntimeServiceError.New("cannot start service %s", service)
+	}
+	fmt.Printf("done\n")
+	return nil
+}
+func writeLinkUnit(systemd* dbus.Conn, name string, content string, enable bool) (bool, error) {
+	unitP := filepath.Join(common.UnitPath, name)
+	oldContent, _ := os.ReadFile(unitP)
+	changed := content != string(oldContent)
+
+	err := os.WriteFile(unitP, []byte(content), 0644)
+	if err != nil {
+		return changed, CreateServiceError.Wrap(err, "failed to write unit %s", name)
+	}
+	if enable {
+		fmt.Printf("Enabling %s...\n", name)
+		_, _, err = systemd.EnableUnitFilesContext(context.Background(), []string{unitP}, false, true)
+	} else {
+		fmt.Printf("Linking %s...\n", name)
+		_, err = systemd.LinkUnitFilesContext(context.Background(), []string{unitP}, false, true)
+	}
+	if err != nil {
+		return changed, RuntimeServiceError.Wrap(err, "cannot enable unit %s", name)
+	}
+	return changed, nil
+}
+
+func stopUnit(systemd *dbus.Conn, name string) error {
 	statuses, err := systemd.ListUnitsByNamesContext(context.Background(), []string{name})
 	if err != nil {
 		return RuntimeServiceError.Wrap(err, "cannot list unit %s", name)
@@ -572,100 +590,39 @@ func stopDisableDeleteUnit(systemd *dbus.Conn, name string) error {
 		}
 		fmt.Printf("done\n")
 	}
+	return nil
+}
+func stopDisableDeleteUnit(systemd *dbus.Conn, name string) error {
+	fmt.Printf("Stopping and disabling %s...\n", name)
+	statuses, err := systemd.ListUnitsByNamesContext(context.Background(), []string{name})
+	if err != nil {
+		return RuntimeServiceError.Wrap(err, "cannot list unit %s", name)
+	}
+	if statuses[0].ActiveState == "active" {
+		// STOP unit
+		wait := make(chan string)
+		systemd.StopUnitContext(context.Background(), name, "replace", wait)
+		fmt.Printf("\tstopping %s...\n", name)
+		res := <- wait
+		if res != "done" {
+			return RuntimeServiceError.New("cannot stop unit %s", name)
+		}
+		fmt.Printf("\t\tdone\n")
+	}
 	if statuses[0].LoadState != "not-found" {
 		// Disable unit
+		fmt.Printf("\tdisabling %s...\n", name)
 		_, err = systemd.DisableUnitFilesContext(context.Background(), []string{name}, false)
 		if err != nil {
-			return RuntimeServiceError.Wrap(err, "cannot disable unit %s: %s", name)
+			return RuntimeServiceError.Wrap(err, "cannot disable unit %s: %v", name, statuses[0])
 		}
+		fmt.Printf("\t\tdone\n")
 	}
 	// Remove unit file
 	err = os.RemoveAll(filepath.Join(common.UnitPath, name))
 	if err != nil {
 		return  RemoveUnitError.Wrap(err, "cannot remove unit %s", name) 
 	}
-	return nil
-}
-
-const sliceStr string = `
-[Unit]
-Description=Slice used to run sloop services
-Before=slices.target
-
-[Slice]
-MemoryAccounting=true
-IOAccounting=true
-CPUAccounting=true
-`
-
-func handleSlice(systemd *dbus.Conn) (bool, error) {
-	unitP := filepath.Join(common.UnitPath, "sloop.slice")
-
-	oldUnit, _ := os.ReadFile(unitP)
-	if targetStr == string(oldUnit) {
-		return false, nil
-	}
-
-	if oldUnit != nil {
-		err := stopDisableDeleteUnit(systemd, "sloop.slice")
-		if err != nil {
-			return false, err
-		}
-	}
-
-	err := os.WriteFile(unitP, []byte(sliceStr), 0644)
-	if err != nil {
-		return false, CreateServiceError.Wrap(err, "failed to write unit file for  sloop.slice")
-	}
-	_, err = systemd.LinkUnitFilesContext(context.Background(), []string{unitP}, false, true)
-	if err != nil {
-		return false, RuntimeServiceError.Wrap(err, "cannot link sloop.slice")
-	}
-	return true, nil
-}
-
-const targetStr string = `
-[Unit]
-Description=Sloop target
-Before=multi-user.target
-
-[Install]
-WantedBy=multi-user.target
-`
-
-func handleTarget(systemd *dbus.Conn) (bool, error) {
-	unitP := filepath.Join(common.UnitPath, "sloop.target")
-
-	oldUnit, _ := os.ReadFile(unitP)
-	if targetStr == string(oldUnit) {
-		return false, nil
-	}
-
-	err := stopDisableDeleteUnit(systemd, "sloop.target")
-	if err != nil {
-		return false, err
-	}
-
-	err = os.WriteFile(unitP, []byte(targetStr), 0644)
-	if err != nil {
-		return false, CreateServiceError.Wrap(err, "failed to write unit file for  sloop.target")
-	}
-	_, _, err = systemd.EnableUnitFilesContext(context.Background(), []string{unitP}, false, true)
-	if err != nil {
-		return false, RuntimeServiceError.Wrap(err, "cannot enable sloop.target")
-	}
-	return true, nil
-}
-
-func startService(systemd *dbus.Conn, service string) error {
-	wait := make(chan string)
-	systemd.StartUnitContext(context.Background(), service, "replace", wait)
-	fmt.Printf("starting %s...\n", service)
-	res := <- wait
-	if res != "done" {
-		return RuntimeServiceError.New("cannot start service %s", service)
-	}
-	fmt.Printf("done\n")
 	return nil
 }
 
@@ -766,25 +723,38 @@ func Create(config cue.Config) error {
 		return  RuntimeServiceError.Wrap(err, "cannot connect to systemd dbus") 
 	}
 
+	configUnits := []string{"sloop.target", "sloop.slice"}
+	configUnits = append(configUnits, lo.Map(lo.Keys(config.Services), func (s string, _ int) string {
+		return "sloop-service-"+s+".service"
+	})...)
+	configUnits = append(configUnits, lo.Map(lo.Keys(config.Timers), func (s string, _ int) string {
+		return "sloop-timer-"+s+".timer"
+	})...)
+	configUnits = append(configUnits, lo.Map(lo.Keys(config.Timers), func (s string, _ int) string {
+		return "sloop-timer-"+s+".service"
+	})...)
+	configUnits = append(configUnits, lo.Map(lo.Keys(config.Bridges), func (s string, _ int) string {
+		return "sloop-bridge-"+s+".service"
+	})...)
+	configUnits = append(configUnits, lo.Map(lo.Keys(config.Hosts), func (s string, _ int) string {
+		return "sloop-host-"+s+".service"
+	})...)
 	curImages, err := getCurImages();
 	if err != nil {
 		return err
 	}
-	curServices, err := getCurServices()
+
+	curUnits, err := getCurUnits()
 	if err != nil {
 		return err
 	}
-	curTimers, err := getCurTimers()
-	if err != nil {
-		return err
-	}
-	curBridges, err := getCurBridges()
-	if err != nil {
-		return err
-	}
-	curHosts, err := getCurHosts()
-	if err != nil {
-		return err
+	unitsToRemove, _ := lo.Difference(curUnits, configUnits)
+	for _, u := range unitsToRemove {
+		err = stopDisableDeleteUnit(systemd, u)
+		if err != nil {
+			return err
+		}
+		reload = true
 	}
 
 	err = handleInit()
@@ -814,40 +784,32 @@ func Create(config cue.Config) error {
 	}
 
 
-	for _, b := range config.Bridges {
+	for n, b := range config.Bridges {
 		changed, err := handleBridge(systemd, b)
 		if err != nil {
 			return err
 		}
 		if changed {
+			err = stopUnit(systemd, "sloop-bridge-"+n+".service")
+			if err != nil {
+				return err
+			}
 			reload = true
 		}
 	}
-	bridgesToRemove, _ := lo.Difference(curBridges, lo.Keys(config.Bridges))
-	for _, b := range bridgesToRemove {
-		err = stopDisableDeleteUnit(systemd, "sloop-bridge-"+b+".service")
-		if err != nil {
-			return err
-		}
-		reload = true
-	}
 
-	for _, h := range config.Hosts {
+	for n, h := range config.Hosts {
 		changed, err := handleHost(systemd, h)
 		if err != nil {
 			return err
 		}
 		if changed {
+			err = stopUnit(systemd, "sloop-host-"+n+".service")
+			if err != nil {
+				return err
+			}
 			reload = true
 		}
-	}
-	hostsToRemove, _ := lo.Difference(curHosts, lo.Keys(config.Hosts))
-	for _, b := range hostsToRemove {
-		err = stopDisableDeleteUnit(systemd, "sloop-host-"+b+".service")
-		if err != nil {
-			return err
-		}
-		reload = true
 	}
 
 	for _, v := range config.Volumes {
@@ -872,70 +834,47 @@ func Create(config cue.Config) error {
 		}
 	}
 
-	servicesToRemove, _ := lo.Difference(curServices, lo.Keys(config.Services))
-	for _, cu := range servicesToRemove {
-		err = stopDisableDeleteUnit(systemd, "sloop-service-"+cu+".service")
-		if err != nil {
-			return err
-		}
-		reload = true
-	}
-	for _, s := range config.Services {
+	for n, s := range config.Services {
 		changed, err := handleServiceFiles(systemd, s)
 		if err != nil {
 			return err
 		}
-		if !changed {
-			continue
-		}
-		err = handleService(systemd, s)
+		changed2, err := handleService(systemd, s)
 		if err != nil {
 			return err
 		}
-		reload = true
+		if changed2 && !changed {
+			err = stopUnit(systemd, "sloop-service-"+n+".service")
+			if err != nil {
+				return err
+			}
+		}
+		reload = reload || changed || changed2
 	}
 
-	timersToRemove, _ := lo.Difference(curTimers, lo.Keys(config.Timers))
-	for _, cu := range timersToRemove {
-		err = stopDisableDeleteUnit(systemd, "sloop-timer-"+cu+".service")
+	for n, t := range config.Timers {
+		changed, err := handleTimer(systemd, t)
 		if err != nil {
 			return err
 		}
-		err = stopDisableDeleteUnit(systemd, "sloop-timer-"+cu+".timer")
-		if err != nil {
-			return err
+		if changed {
+			err = stopUnit(systemd, "sloop-timer-"+n+".timer")
+			if err != nil {
+				return err
+			}
+			err = stopUnit(systemd, "sloop-timer-"+n+".service")
+			if err != nil {
+				return err
+			}
+			reload = true
 		}
-		reload = true
-	}
-	for _, t := range config.Timers {
-		err := handleTimer(systemd, t)
-		if err != nil {
-			return err
-		}
-		reload = true
 	}
 
 	if reload {
 		systemd.ReloadContext(context.Background())
 	}
 
-	for _, s := range config.Services {
-		if !s.Enable {
-			continue
-		}
-		//start service
-		err = startService(systemd, "sloop-service-" + s.Name + ".service")
-		if err != nil {
-			return err
-		}
-	}
-	for _, t := range config.Timers {
-		err = startService(systemd, "sloop-timer-" + t.Name + ".timer")
-		if err != nil {
-			return err
-		}
-	}
-	err = startService(systemd, "sloop.target")
+	err = startUnit(systemd, "sloop.target")
 	if err != nil {
 		return err
 	}
