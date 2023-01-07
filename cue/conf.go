@@ -52,10 +52,22 @@ type Service struct {
 	Requires []string
 	After []string
 }
+type Cmd struct {
+	Service string
+	Action string
+}
+type Timer struct {
+	Name string
+	Run []Cmd
+	OnCalendar []string
+	OnActiveSec []string
+	Persistent bool
+}
 type Config struct {
 	Volumes map[string]Volume `json:"$volumes"`
 	Bridges map[string]Bridge `json:"$bridges"`
 	Hosts map[string]Host `json:"$hosts"`
 	Services map[string]Service `json:"$services"`
+	Timers map[string]Timer `json:"$timers"`
 }
 

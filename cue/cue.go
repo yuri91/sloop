@@ -62,6 +62,21 @@ const typesStr = `
 	after: [...#Dependency]
 	...
 }
+
+#Cmd: {
+	service: #Service
+	action: "start" | "reload"
+}
+
+#Timer: {
+	name: string
+	run: [...#Cmd]
+	onCalendar: [...string] | *[]
+	onActiveSec: [...string] | *[]
+	persistent: bool | *true
+	...
+}
+
 #UnitName:   =~"^(\\.service)|(\\.target)|(\\.socket)$"
 #Dependency: #Service | #UnitName
 
@@ -85,6 +100,15 @@ $service: [Name=_]: S=#Service & {
 	_hostCheck: {
 		if S.host != null {
 			"\(S.host.name).is_in_host": [ for k, v in $host if v.name == S.host.name {v}] & [S.host]
+		}
+	}
+}
+
+$timer: [Name=_]: T=#Timer & {
+	name: string | *strings.Replace(Name,"_","-",-1)
+	_serviceCheck: {
+		for r in T.run {
+			"\(r.service.name).is_in_$service": [ for k, v in $service if v.name == r.service.name {v}] & [r.service]
 		}
 	}
 }
@@ -156,14 +180,35 @@ $services: {
 				}
 			]
 			if s.host != null {
-				host: host.name
+				host: s.host.name
 			}
 			if s.host == null {
 				host: ""
 			}
+			enable: s.enable
+			capabilities: s.capabilities
 			wants: [ for w in s.wants {(w & string) | ("sloop-service-" + w.name + ".service")}]
 			requires: [ for r in s.requires {(r & string) | ("sloop-service-" + r.name + ".service")}]
 			after: [ for a in s.after {(a & string) | ("sloop-service-" + a.name + ".service")}]
+		}
+	}
+}
+
+$timers: {
+	for _, t in $timer {
+		"\(t.name)": {
+			name: t.name
+			run: [
+				for r in t.run {
+					{
+						service: "sloop-service-" + r.service.name + ".service"
+						action: r.action
+					}
+				}
+			]
+			onCalendar: t.onCalendar
+			onActiveSec: t.onActiveSec
+			persistent: t.persistent
 		}
 	}
 }

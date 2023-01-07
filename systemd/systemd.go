@@ -50,14 +50,13 @@ func handleInit() error {
 	return nil
 }
 
-const nsenterStr string = `
-#!/bin/bash
-
+const nsenterStr string = `#!/bin/bash
 service=$1
-cmd=$2
-pid=
-env=
-exec nsenter -a -t ${pid} ${cmd}
+shift
+cmd="$@"
+pid=$(head -n 1 /sys/fs/cgroup/sloop.slice/sloop-service-${service}.service/payload/cgroup.procs)
+env=$(cat /proc/${pid}/environ | xargs -0)
+exec nsenter -a -t ${pid} env -i - ${env} ${cmd}
 `
 func handleNsenter() error {
 	p := filepath.Join(common.ImagePath, "nsenter")
@@ -126,12 +125,13 @@ RestartForceExitStatus=133
 SuccessExitStatus=133
 {{- end }}
 KillMode=mixed
+Delegate=yes
 ExecStart = systemd-nspawn \
 	--quiet \
 	--volatile=overlay \
 	--keep-unit \
 	--register=no \
-	--bind={{.InitPath}}:/catatonit \
+	--bind={{.BinPath}}/catatonit:/catatonit \
 	--kill-signal=SIGTERM \
 	--oci-bundle={{.BundleDir}} \
 	-M {{.Name}} \
@@ -151,7 +151,7 @@ ExecStart = systemd-nspawn \
 	/catatonit -- {{.Start}}
 
 {{- if ne .Reload "" }}
-ExecReload = {{.InitPath}}/nsenter {{.Name}} {{.Reload}}
+ExecReload = {{.BinPath}}/nsenter {{.Name}} {{.Reload}}
 {{- end }}
 
 {{- if eq .Type "notify" }}
@@ -229,13 +229,51 @@ ExecStop = ip link delete {{.Name}}
 WantedBy=sloop.target
 `
 
+const timerTemplateStr = `
+[Unit]
+Description = Sloop timer {{.Name}}
+PartOf = sloop.target
+
+[Timer]
+{{- range $cal := .OnCalendar }}
+OnCalendar = {{$cal}}
+{{- end }}
+{{- range $act := .OnActiveSec }}
+OnActiveSec = {{$act}}
+{{- end }}
+Persistent = {{.Persistent}}
+
+[Install]
+WantedBy=sloop.target
+`
+
+const timerServiceTemplateStr = `
+[Unit]
+Description = Sloop timer unit {{.Name}}
+
+[Service]
+Type = oneshot
+{{- range $r := .Run }}
+{{- if eq $r.Action "start" }}
+ExecStart = systemctl start {{$r.Service}}
+{{- else if eq $r.Action "reload" }}
+ExecStart = systemctl reload {{$r.Service}}
+{{- end}}
+{{- end }}
+
+[Install]
+WantedBy=sloop.target
+`
+
 var unitTemplate *template.Template = template.Must(template.New("unit").Funcs(template.FuncMap{}).Parse(unitTemplateStr))
 var hostTemplate *template.Template = template.Must(template.New("host").Funcs(template.FuncMap{}).Parse(hostTemplateStr))
 var bridgeTemplate *template.Template = template.Must(template.New("bridge").Funcs(template.FuncMap{}).Parse(bridgeTemplateStr))
+var timerTemplate *template.Template = template.Must(template.New("timer").Funcs(template.FuncMap{}).Parse(timerTemplateStr))
+var timerServiceTemplate *template.Template = template.Must(template.New("timerService").Funcs(template.FuncMap{}).Parse(timerServiceTemplateStr))
 
 type UnitConf struct {
 	Name string
-	InitPath string
+	BinPath string
 	BundleDir string
 	ServiceDir string
 	Binds map[string]string
@@ -443,7 +481,7 @@ func handleService(systemd *dbus.Conn, s cue.Service) error {
 	var buf bytes.Buffer
 	conf := UnitConf {
 		Name: s.Name,
-		InitPath: filepath.Join(common.ImagePath, "catatonit"),
+		BinPath: common.ImagePath,
 		BundleDir: serviceDir,
 		ServiceDir: filepath.Join(common.ServicePath, s.Name),
 		Binds: bindsMap,
@@ -478,6 +516,42 @@ func handleService(systemd *dbus.Conn, s cue.Service) error {
 	}
 	if err != nil {
 		return RuntimeServiceError.Wrap(err, "cannot enable unit for service %s", s.Name)
+	}
+	return nil
+}
+
+func handleTimer(systemd *dbus.Conn, t cue.Timer) error {
+	var buf bytes.Buffer
+	err := timerTemplate.Execute(&buf, t)
+	if err != nil {
+		return CreateServiceError.Wrap(err, "failed to execute template for timer %s", t.Name)
+	}
+	timerStr := buf.String()
+	err = timerServiceTemplate.Execute(&buf, t)
+	if err != nil {
+		return CreateServiceError.Wrap(err, "failed to execute template for timer service %s", t.Name)
+	}
+	timerServiceStr := buf.String()
+
+	timerP := filepath.Join(common.UnitPath, "sloop-timer-" + t.Name + ".timer")
+	serviceP := filepath.Join(common.UnitPath, "sloop-timer-" + t.Name + ".service")
+
+	err = os.WriteFile(timerP, []byte(timerStr), 0644)
+	if err != nil {
+		return CreateServiceError.Wrap(err, "failed to write unit file for timer %s", t.Name)
+	}
+	err = os.WriteFile(serviceP, []byte(timerServiceStr), 0644)
+	if err != nil {
+		return CreateServiceError.Wrap(err, "failed to write unit file for timer service %s", t.Name)
+	}
+
+	_, _, err = systemd.EnableUnitFilesContext(context.Background(), []string{timerP}, false, true)
+	if err != nil {
+		return RuntimeServiceError.Wrap(err, "cannot enable unit for timer %s", t.Name)
+	}
+	_, err = systemd.LinkUnitFilesContext(context.Background(), []string{serviceP}, false, true)
+	if err != nil {
+		return RuntimeServiceError.Wrap(err, "cannot link unit for timer service %s", t.Name)
 	}
 	return nil
 }
@@ -663,6 +737,9 @@ func getCurBridges() ([]string, error) {
 func getCurHosts() ([]string, error) {
 	return getCur("host")
 }
+func getCurTimers() ([]string, error) {
+	return getCur("timer")
+}
 
 func Create(config cue.Config) error {
 	err := os.MkdirAll(common.VolumePath, 0700)
@@ -697,6 +774,10 @@ func Create(config cue.Config) error {
 	if err != nil {
 		return err
 	}
+	curTimers, err := getCurTimers()
+	if err != nil {
+		return err
+	}
 	curBridges, err := getCurBridges()
 	if err != nil {
 		return err
@@ -707,6 +788,11 @@ func Create(config cue.Config) error {
 	}
 
 	err = handleInit()
+	if err != nil {
+		return err
+	}
+
+	err = handleNsenter()
 	if err != nil {
 		return err
 	}
@@ -788,7 +874,7 @@ func Create(config cue.Config) error {
 
 	servicesToRemove, _ := lo.Difference(curServices, lo.Keys(config.Services))
 	for _, cu := range servicesToRemove {
-		err = stopDisableDeleteUnit(systemd, cu+".service")
+		err = stopDisableDeleteUnit(systemd, "sloop-service-"+cu+".service")
 		if err != nil {
 			return err
 		}
@@ -809,6 +895,26 @@ func Create(config cue.Config) error {
 		reload = true
 	}
 
+	timersToRemove, _ := lo.Difference(curTimers, lo.Keys(config.Timers))
+	for _, cu := range timersToRemove {
+		err = stopDisableDeleteUnit(systemd, "sloop-timer-"+cu+".service")
+		if err != nil {
+			return err
+		}
+		err = stopDisableDeleteUnit(systemd, "sloop-timer-"+cu+".timer")
+		if err != nil {
+			return err
+		}
+		reload = true
+	}
+	for _, t := range config.Timers {
+		err := handleTimer(systemd, t)
+		if err != nil {
+			return err
+		}
+		reload = true
+	}
+
 	if reload {
 		systemd.ReloadContext(context.Background())
 	}
@@ -819,6 +925,12 @@ func Create(config cue.Config) error {
 		}
 		//start service
 		err = startService(systemd, "sloop-service-" + s.Name + ".service")
+		if err != nil {
+			return err
+		}
+	}
+	for _, t := range config.Timers {
+		err = startService(systemd, "sloop-timer-" + t.Name + ".timer")
 		if err != nil {
 			return err
 		}
