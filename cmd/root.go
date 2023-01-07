@@ -34,6 +34,7 @@ func init() {
 	rootCmd.PersistentFlags().StringVar(&confDir, "conf", ".", "configuration root directory")
 
 	rootCmd.AddCommand(checkCmd)
+	rootCmd.AddCommand(printCmd)
 	rootCmd.AddCommand(runCmd)
 	rootCmd.AddCommand(purgeCmd)
 	rootCmd.AddCommand(initCmd)

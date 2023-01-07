@@ -6,19 +6,18 @@ import (
 
 	"cuelang.org/go/cue/errors"
 	"github.com/joomcode/errorx"
-	//"github.com/kr/pretty"
 	"github.com/spf13/cobra"
 
 	"yuri91/sloop/cue"
 )
 
 var (
-	checkCmd = &cobra.Command{
-		Use:   "check",
-		Short: "Check the cue configuration",
-		Long: `Check the cue configuration, whithout actually applying it`,
+	printCmd = &cobra.Command{
+		Use:   "print",
+		Short: "Print part of the cue configuration",
+		Long: `Print part of the cue configuration, by specifying a path`,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return check()
+			return print(args[0])
 		},
 	}
 )
@@ -26,8 +25,8 @@ var (
 func init() {
 }
 
-func check() error {
-	_, err := cue.GetConfig(".")
+func print(path string) error {
+	value, err := cue.GetCueConfig(".")
 	if errx, ok := err.(*errorx.Error); ok && cue.CueErrors.IsNamespaceOf(errx.Type()) {
 		fmt.Printf("Error in configuration: [%s] %s \n", errx.Type().FullName(), errx.Message())
 		fmt.Println(errors.Details(errx.Cause(), nil))
@@ -36,7 +35,6 @@ func check() error {
 	if err != nil {
 		return err
 	}
-	fmt.Printf("Conf is valid!\n")
-	//fmt.Printf("%# v\n", pretty.Formatter(config))
+	cue.Print(*value, path)
 	return nil
 }

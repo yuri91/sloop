@@ -1,9 +1,11 @@
 package cue
 
 import (
+	"fmt"
+
 	"cuelang.org/go/cue"
 	"cuelang.org/go/cue/cuecontext"
-//	"cuelang.org/go/cue/format"
+	"cuelang.org/go/cue/format"
 	"cuelang.org/go/cue/load"
 )
 
@@ -214,7 +216,7 @@ $timers: {
 }
 `
 
-func GetConfig(path string) (*Config, error) {
+func GetCueConfig(path string) (*cue.Value, error) {
 	// We need a cue.Context, the New'd return is ready to use
 	ctx := cuecontext.New()
 
@@ -245,8 +247,13 @@ func GetConfig(path string) (*Config, error) {
 		return nil, ConstraintError.Wrap(value.Err(), "Error during constrain")
 	}
 
-	scope := value.Unify(types)
-	value = ctx.CompileString(goTypesStr, cue.Filename("sloop_go_types.cue"), cue.Scope(scope))
+	value = value.Unify(types)
+	return &value, nil
+}
+
+func GetGoConfig(scope cue.Value) (*Config, error) {
+	ctx := scope.Context()
+	value := ctx.CompileString(goTypesStr, cue.Filename("sloop_go_types.cue"), cue.Scope(scope))
 	if value.Err() != nil {
 		return nil, ConvertError.Wrap(value.Err(), "Error go type conversion")
 	}
@@ -256,21 +263,33 @@ func GetConfig(path string) (*Config, error) {
 	if err != nil {
 		return nil, ValidateError.Wrap(err, "Error in validation")
 	}
-
-	//syn := value.Syntax(
-	//	cue.Final(),
-	//	cue.Concrete(true),
-	//	cue.Definitions(false),
-	//	cue.Hidden(true),
-	//	cue.Optional(true),
-	//)
-	//bs, _ := format.Node(syn)
-	//fmt.Println(string(bs));
-	
 	conf := Config{}
 	err = value.Decode(&conf)
 	if err != nil {
 		return nil, DecodeError.Wrap(err, "Error during decoding into go type")
 	}
 	return &conf,nil
+}
+
+func GetConfig(path string) (*Config, error) {
+	scope, err := GetCueConfig(path)
+	if err != nil {
+		return nil, err
+	}
+	return GetGoConfig(*scope)
+}
+
+func Print(value cue.Value, pathStr string) {
+	path := cue.ParsePath(pathStr)
+	print := value.LookupPath(path);
+
+	syn := print.Syntax(
+		cue.Final(),
+		cue.Concrete(false),
+		cue.Definitions(false),
+		cue.Hidden(true),
+		cue.Optional(true),
+	)
+	bs, _ := format.Node(syn)
+	fmt.Println(string(bs));
 }
