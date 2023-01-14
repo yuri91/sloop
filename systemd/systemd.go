@@ -71,6 +71,26 @@ func handleNsenter() error {
 	return nil
 }
 
+const hostsBaseStr string = `
+127.0.0.1	localhost.localdomain	localhost
+::1		localhost.localdomain	localhost
+
+`
+func handleEtcHosts(hosts map[string]cue.Host) error {
+	hostsStr := hostsBaseStr
+	for n,h := range hosts {
+		for _, i := range h.Interfaces {
+			hostsStr += fmt.Sprintf("%s\t%s\n", i.Ip, n)
+		}
+	}
+	p := filepath.Join(common.UtilsPath, "hosts")
+	err := os.WriteFile(p, []byte(hostsStr), 0666)
+	if err != nil {
+		return CreateImageError.Wrap(err, "failed to write /etc/hosts file")
+	}
+	return nil
+}
+
 func handleVolume(v cue.Volume) error {
 	if v.Name[0] == '/' {
 		return nil
@@ -131,6 +151,7 @@ ExecStart = systemd-nspawn \
 	--volatile=overlay \
 	--keep-unit \
 	--register=no \
+	--bind-ro={{.UtilsPath}}/hosts:/etc/hosts \
 	--bind={{.UtilsPath}}/catatonit:/catatonit \
 	--kill-signal=SIGTERM \
 	--oci-bundle={{.BundleDir}} \
@@ -784,6 +805,11 @@ func Create(config cue.Config) error {
 	}
 
 	err = handleNsenter()
+	if err != nil {
+		return err
+	}
+
+	err = handleEtcHosts(config.Hosts)
 	if err != nil {
 		return err
 	}
