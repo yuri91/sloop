@@ -7,6 +7,7 @@ var ImagePath string
 var ServicePath string
 var UnitPath string
 var VolumePath string
+var UtilsPath string
 
 var baseDir string = "/var/lib/sloop"
 
@@ -16,4 +17,5 @@ func SetPaths(confDir string) {
 	ServicePath = filepath.Join(baseDir, "services")
 	UnitPath = filepath.Join(baseDir, "units")
 	VolumePath = filepath.Join(baseDir, "volumes")
+	UtilsPath = filepath.Join(baseDir, "utils")
 }

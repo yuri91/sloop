@@ -38,7 +38,7 @@ func getImageRootPath(from string) string {
 }
 
 func handleInit() error {
-	p := filepath.Join(common.ImagePath, "catatonit")
+	p := filepath.Join(common.UtilsPath, "catatonit")
 	oldInit, _ := os.ReadFile(p)
 	if bytes.Equal(oldInit, catatonit.Bin) {
 		return nil
@@ -59,7 +59,7 @@ env=$(cat /proc/${pid}/environ | xargs -0)
 exec nsenter -a -t ${pid} env -i - ${env} ${cmd}
 `
 func handleNsenter() error {
-	p := filepath.Join(common.ImagePath, "nsenter")
+	p := filepath.Join(common.UtilsPath, "nsenter")
 	oldInit, _ := os.ReadFile(p)
 	if bytes.Equal(oldInit, []byte(nsenterStr)) {
 		return nil
@@ -131,7 +131,7 @@ ExecStart = systemd-nspawn \
 	--volatile=overlay \
 	--keep-unit \
 	--register=no \
-	--bind={{.BinPath}}/catatonit:/catatonit \
+	--bind={{.UtilsPath}}/catatonit:/catatonit \
 	--kill-signal=SIGTERM \
 	--oci-bundle={{.BundleDir}} \
 	-M {{.Name}} \
@@ -151,7 +151,7 @@ ExecStart = systemd-nspawn \
 	/catatonit -- {{.Start}}
 
 {{- if ne .Reload "" }}
-ExecReload = {{.BinPath}}/nsenter {{.Name}} {{.Reload}}
+ExecReload = {{.UtilsPath}}/nsenter {{.Name}} {{.Reload}}
 {{- end }}
 
 {{- if eq .Type "notify" }}
@@ -265,15 +265,32 @@ ExecStart = systemctl reload {{$r.Service}}
 WantedBy=sloop.target
 `
 
+func capStringLen(length int, source string) string {
+	fmt.Printf("%s %d %d\n", source, len(source), length)
+	if len(source) <= length {
+		return source
+	}
+	prefix := source[0:(length-4)]
+	sha := sha256.Sum256([]byte(source))
+	b64 := base64.StdEncoding.EncodeToString(sha[:])
+	if len(b64) < 4 {
+		for i := 0; i < 4-len(b64); i++ {
+			b64 += "1"
+		}
+	}
+	fmt.Printf("%s\n", prefix + b64[0:4])
+	return prefix + b64[0:4]
+}
+
 var unitTemplate *template.Template = template.Must(template.New("unit").Funcs(template.FuncMap{}).Parse(unitTemplateStr))
-var hostTemplate *template.Template = template.Must(template.New("host").Funcs(template.FuncMap{}).Parse(hostTemplateStr))
+var hostTemplate *template.Template = template.Must(template.New("host").Funcs(template.FuncMap{"capStringLen":capStringLen}).Parse(hostTemplateStr))
 var bridgeTemplate *template.Template = template.Must(template.New("bridge").Funcs(template.FuncMap{}).Parse(bridgeTemplateStr))
 var timerTemplate *template.Template = template.Must(template.New("timer").Funcs(template.FuncMap{}).Parse(timerTemplateStr))
 var timerServiceTemplate *template.Template = template.Must(template.New("timerService").Funcs(template.FuncMap{}).Parse(timerServiceTemplateStr))
 
 type UnitConf struct {
 	Name string
-	BinPath string
+	UtilsPath string
 	BundleDir string
 	ServiceDir string
 	Binds map[string]string
@@ -441,7 +458,7 @@ func handleService(systemd *dbus.Conn, s cue.Service) (bool, error) {
 	var buf bytes.Buffer
 	conf := UnitConf {
 		Name: s.Name,
-		BinPath: common.ImagePath,
+		UtilsPath: common.UtilsPath,
 		BundleDir: serviceDir,
 		ServiceDir: filepath.Join(common.ServicePath, s.Name),
 		Binds: bindsMap,
@@ -714,6 +731,10 @@ func Create(config cue.Config) error {
 	os.MkdirAll(common.ServicePath, 0700)
 	if err != nil {
 		return  FilesystemError.Wrap(err, "cannot create services directory") 
+	}
+	os.MkdirAll(common.UtilsPath, 0700)
+	if err != nil {
+		return  FilesystemError.Wrap(err, "cannot create utils directory") 
 	}
 
 	reload := false
