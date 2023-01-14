@@ -169,9 +169,9 @@ const hostTemplateStr = `
 Description = Sloop network namespace {{.Name}}
 After = network-online.target
 StopWhenUnneeded = yes
-{{ range $n := .Netdevs}}
-After = sloop-bridge-{{$n.Bridge}}.service
-Requires = sloop-bridge-{{$n.Bridge}}.service
+{{ range $n := .Interfaces}}
+After = sloop-bridge-{{$n.Bridge.Name}}.service
+Requires = sloop-bridge-{{$n.Bridge.Name}}.service
 {{end}}
 
 [Service]
@@ -186,16 +186,16 @@ ExecStart = mount --bind /proc/self/ns/net /var/run/netns/sloop-{{.Name}}
 
 ExecStart = ip link set lo up
 
-{{ range $n := .Netdevs}}
-ExecStart = nsenter -t 1 -n -- ip link add {{$n.Bridge}}-{{$.Name}}-{{$n.Name}} type veth peer {{$n.Name}} netns sloop-{{$.Name}}
-ExecStart = nsenter -t 1 -n -- ip link set dev {{$n.Bridge}}-{{$.Name}}-{{$n.Name}} up
-ExecStart = nsenter -t 1 -n -- ip link set dev {{$n.Bridge}}-{{$.Name}}-{{$n.Name}} master {{$n.Bridge}}
+{{ range $n := .Interfaces}}
+ExecStart = nsenter -t 1 -n -- ip link add {{$.Name}}-{{$n.Name}} type veth peer {{$n.Name}} netns sloop-{{$.Name}}
+ExecStart = nsenter -t 1 -n -- ip link set dev {{$.Name}}-{{$n.Name}} up
+ExecStart = nsenter -t 1 -n -- ip link set dev {{$.Name}}-{{$n.Name}} master {{$n.Bridge.Name}}
 ExecStart = ip link set {{$n.Name}} up
-ExecStart = ip addr add {{$n.Ip}}/16 dev {{$n.Name}}
-ExecStart = ip route add default via {{$n.BridgeIp}}
+ExecStart = ip addr add {{$n.Ip}}/{{$n.Bridge.Prefix}} dev {{$n.Name}}
+ExecStart = ip route add default via {{$n.Bridge.Ip}}
 {{end}}
 
-{{ range $n := .Netdevs}}
+{{ range $n := .Interfaces}}
 ExecStop = ip link delete {{$n.Name}}
 {{end}}
 
@@ -220,9 +220,9 @@ ExecStart = sysctl net.ipv4.ip_forward=1
 ExecStart = ip link add {{.Name}} type bridge
 ExecStart = ip link set {{.Name}} up
 ExecStart = ip addr add {{.Ip}}/16 dev {{.Name}}
-ExecStart = iptables -t nat -A POSTROUTING -s {{.Ip}}/16 ! -o {{.Name}} -j MASQUERADE
+ExecStart = iptables -t nat -A POSTROUTING -s {{.Ip}}/{{.Prefix}} ! -o {{.Name}} -j MASQUERADE
 
-ExecStop = iptables -t nat -D POSTROUTING -s {{.Ip}}/16 ! -o {{.Name}} -j MASQUERADE
+ExecStop = iptables -t nat -D POSTROUTING -s {{.Ip}}/{{.Prefix}} ! -o {{.Name}} -j MASQUERADE
 ExecStop = ip link delete {{.Name}}
 
 [Install]

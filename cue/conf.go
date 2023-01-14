@@ -4,18 +4,18 @@ type Volume struct {
 	Name string
 }
 type Bridge struct {
-	Name string
-	Ip string
+	Name string `json:"name"`
+	Ip string `json:"ip"`
+	Prefix int `json:"prefix"`
 }
-type Netdev struct {
-	Name string
-	Ip string
-	Bridge string `json:"$bridge"`
-	BridgeIp string `json:"bridgeIp"`
+type Interface struct {
+	Name string `json:"name"`
+	Ip string `json:"ip"`
+	Bridge Bridge `json:"bridge"`
 }
 type Host struct {
 	Name string
-	Netdevs []Netdev `json:"$netdevs"`
+	Interfaces map[string]Interface `json:"if"`
 }
 type File struct {
 	Content string

@@ -13,4 +13,5 @@ var (
 	ConvertError = CueErrors.NewType("convert")
 	ValidateError = CueErrors.NewType("validate")
 	DecodeError = CueErrors.NewType("decode")
+	IpInjectError = CueErrors.NewType("ip_inject")
 )

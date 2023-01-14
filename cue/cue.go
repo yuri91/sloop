@@ -1,32 +1,41 @@
 package cue
 
 import (
+	"crypto/sha256"
+	"encoding/binary"
 	"fmt"
+	"net"
 
 	"cuelang.org/go/cue"
 	"cuelang.org/go/cue/cuecontext"
 	"cuelang.org/go/cue/format"
 	"cuelang.org/go/cue/load"
+
+	"github.com/samber/lo"
 )
 
 const typesStr = `
+import $__net "net"
 #Volume: {
 	name: string
 }
+#IPPrefix: >0 & <32
 #Bridge: {
 	name: string
-	ip: string
+	ip: $__net.IP & string | *"0.0.0.0"
+	prefix: #IPPrefix
+	...
 }
-#Netdev: {
+#Interface: {
 	name: string
 	type: "veth"
 	bridge: #Bridge
-	ip: string
+	ip: $__net.IP & string | *"0.0.0.0"
 	...
 }
 #Host: {
 	name: string
-	netdevs: [Name=_]: #Netdev & {name: string | *Name}
+	if: [Name=_]: #Interface & {name: string | *Name}
 	...
 }
 
@@ -116,16 +125,6 @@ $timer: [Name=_]: T=#Timer & {
 }
 `
 const goTypesStr = `
-#GoNetdev: #Netdev & {
-	bridge: #Bridge
-	$bridge: bridge.name
-	bridgeIp: bridge.ip
-}
-#GoHost: #Host & {
-	netdevs: [string]: #Netdev
-	$netdevs: [ for k, v in netdevs {v & #GoNetdev}]
-}
-
 $volumes: {
 	for _, v in $volume {
 		"\(v.name)": v&#Volume
@@ -138,7 +137,7 @@ $bridges: {
 }
 $hosts: {
 	for _, v in $host {
-		"\(v.name)": v&#GoHost
+		"\(v.name)": v
 	}
 }
 $services: {
@@ -216,6 +215,121 @@ $timers: {
 }
 `
 
+type BridgePeer struct {
+	Host string
+	Iface *Interface
+}
+type BridgeData struct {
+	Name string
+	Ip string
+	Prefix uint32
+	Peers []BridgePeer `json:"-"`
+}
+type HostData struct {
+	Name string `json:"name"`
+	Interfaces map[string]*Interface `json:"if"`
+}
+func nonull(ptr []byte, msg string) {
+	if ptr == nil {
+		panic(msg)
+	}
+}
+func ip2int(ipStr string) uint32 {
+	ip := net.ParseIP(ipStr)[12:]
+	nonull(ip, "ipStr must be a valid ip")
+	return binary.BigEndian.Uint32(ip)
+}
+func ip2intPrefix(ipStr string, prefix uint32) uint32 {
+	ip := net.ParseIP(ipStr)
+	nonull(ip, "ipStr must be a valid ip")
+	mask := net.CIDRMask(int(prefix), 32)
+	nonull(mask, "prefix must be a valid subnet prefix")
+	masked := ip.Mask(mask)
+	nonull(masked, "mask operation cannot fail")
+	return binary.BigEndian.Uint32(masked)
+}
+
+func int2ip(nn uint32) string {
+	ip := make(net.IP, 4)
+	binary.BigEndian.PutUint32(ip, nn)
+	return ip.String()
+}
+func hashBits(input string, mask uint32) uint32 {
+	sha := sha256.Sum256([]byte(input))
+	n := binary.BigEndian.Uint32(sha[0:4])
+	n = n & mask
+	return n
+}
+func allocateIp(allocMap map[uint32]bool, start uint32, end uint32,name string) (uint32, error) {
+	mask := end-start-1
+	candidate := start + 1 + hashBits(name, mask)
+	if candidate >= end {
+		candidate = start + 1
+	}
+	for {
+		_, exists := allocMap[candidate]
+		if !exists {
+			break;
+		}
+		candidate++
+		if candidate >= end {
+			return 0, IpInjectError.New("Ip range exausted")
+		}
+	}
+	allocMap[candidate] = true
+	return candidate, nil
+}
+func injectIPs(value cue.Value) (*cue.Value, error) {
+	bridgeMap := make(map[string]BridgeData)
+	bridgesVal := value.LookupPath(cue.ParsePath("$bridge"))
+	err := bridgesVal.Decode(&bridgeMap)
+	if err != nil {
+		return nil, DecodeError.Wrap(err, "Error during decoding into go type")
+	}
+	bridgeMap = lo.MapKeys(bridgeMap, func(v BridgeData, _ string) string {
+		return v.Name
+	})
+	hostMap := make(map[string]HostData)
+	hostsVal := value.LookupPath(cue.ParsePath("$host"))
+	err = hostsVal.Decode(&hostMap)
+	if err != nil {
+		return nil, DecodeError.Wrap(err, "Error during decoding into go type")
+	}
+	for _, host := range hostMap {
+		for _, iface := range host.Interfaces {
+			b := bridgeMap[iface.Bridge.Name]
+			b.Peers = append(b.Peers, BridgePeer{host.Name, iface})
+			bridgeMap[iface.Bridge.Name] = b
+		}
+	}
+	for _, bridge := range bridgeMap {
+		start := ip2intPrefix(bridge.Ip, bridge.Prefix)
+		end := start + (1<<bridge.Prefix)
+		ip := ip2int(bridge.Ip)
+		allocMap := make(map[uint32]bool)
+		allocMap[ip] = true
+		if ip := ip2int(bridge.Ip); ip != 0 {
+			allocMap[ip] = true
+		}
+		for _, i := range bridge.Peers {
+			if ip := ip2int(i.Iface.Ip); ip != 0 {
+				allocMap[ip] = true
+			}
+		}
+		for _, i := range bridge.Peers {
+			if ip := ip2int(i.Iface.Ip); ip != 0 {
+				continue;
+			}
+			ip, err := allocateIp(allocMap, start, end, i.Host+i.Iface.Name)
+			if err != nil {
+				return nil, err
+			}
+			i.Iface.Ip = int2ip(ip)
+		}
+	}
+	newVal := value.FillPath(cue.ParsePath("$host"), hostMap)
+	return &newVal, nil
+}
 func GetCueConfig(path string) (*cue.Value, error) {
 	// We need a cue.Context, the New'd return is ready to use
 	ctx := cuecontext.New()
@@ -248,7 +362,11 @@ func GetCueConfig(path string) (*cue.Value, error) {
 	}
 
 	value = value.Unify(types)
-	return &value, nil
+	valueAddr, err := injectIPs(value)
+	if err != nil {
+		return nil, err
+	}
+	return valueAddr, nil
 }
 
 func GetGoConfig(scope cue.Value) (*Config, error) {
