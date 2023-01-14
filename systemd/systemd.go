@@ -3,6 +3,8 @@ package systemd
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io/fs"
@@ -207,14 +209,16 @@ ExecStart = mount --bind /proc/self/ns/net /var/run/netns/sloop-{{.Name}}
 
 ExecStart = ip link set lo up
 
-{{ range $n := .Interfaces}}
-ExecStart = nsenter -t 1 -n -- ip link add {{$.Name}}-{{$n.Name}} type veth peer {{$n.Name}} netns sloop-{{$.Name}}
-ExecStart = nsenter -t 1 -n -- ip link set dev {{$.Name}}-{{$n.Name}} up
-ExecStart = nsenter -t 1 -n -- ip link set dev {{$.Name}}-{{$n.Name}} master {{$n.Bridge.Name}}
+{{- range $n := .Interfaces }}
+{{- with $ifname := printf "%s-%s" $.Name $n.Name | capStringLen 15 }}
+ExecStart = nsenter -t 1 -n -- ip link add {{ $ifname }} type veth peer {{$n.Name}} netns sloop-{{$.Name}}
+ExecStart = nsenter -t 1 -n -- ip link set dev {{ $ifname }} up
+ExecStart = nsenter -t 1 -n -- ip link set dev {{ $ifname }} master {{$n.Bridge.Name}}
 ExecStart = ip link set {{$n.Name}} up
 ExecStart = ip addr add {{$n.Ip}}/{{$n.Bridge.Prefix}} dev {{$n.Name}}
 ExecStart = ip route add default via {{$n.Bridge.Ip}}
-{{end}}
+{{- end }}
+{{- end }}
 
 {{ range $n := .Interfaces}}
 ExecStop = ip link delete {{$n.Name}}
