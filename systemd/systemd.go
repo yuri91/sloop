@@ -78,17 +78,36 @@ const hostsBaseStr string = `
 ::1		localhost.localdomain	localhost
 
 `
-func handleEtcHosts(hosts map[string]cue.Host) error {
-	hostsStr := hostsBaseStr
+func handleEtcHosts(hosts map[string]cue.Service, bridges map[string]cue.Bridge) error {
+	bridgeHosts := make(map[string]string)
 	for n,h := range hosts {
-		for _, i := range h.Interfaces {
-			hostsStr += fmt.Sprintf("%s\t%s\n", i.Ip, n)
+		if !h.Net.Private {
+			continue
+		}
+		for _, i := range h.Net.Interfaces {
+			if i.Type == "bridge" {
+				bridgeHosts[i.Bridge.Name] += fmt.Sprintf("%s\t%s\n", i.Ip, n)
+			}
 		}
 	}
-	p := filepath.Join(common.UtilsPath, "hosts")
-	err := os.WriteFile(p, []byte(hostsStr), 0666)
-	if err != nil {
-		return CreateImageError.Wrap(err, "failed to write /etc/hosts file")
+	for n,h := range hosts {
+		hostsStr := hostsBaseStr
+		if !h.Net.Private {
+			for _, s := range bridgeHosts {
+				hostsStr += s
+			}
+		} else {
+			for _, i := range h.Net.Interfaces {
+				if i.Type == "bridge" {
+					hostsStr += bridgeHosts[i.Bridge.Name]
+				}
+			}
+		}
+		p := filepath.Join(common.ServicePath, n, "hosts")
+		err := os.WriteFile(p, []byte(hostsStr), 0666)
+		if err != nil {
+			return CreateImageError.Wrap(err, "failed to write /etc/hosts file for service %s", n)
+		}
 	}
 	return nil
 }
@@ -148,19 +167,40 @@ SuccessExitStatus=133
 {{- end }}
 KillMode=mixed
 Delegate=yes
+
+{{- if .Net.Private }}
+ExecStartPre = ip netns add sloop-{{.Name}}
+ExecStartPre = ip netns exec sloop-{{.Name}} ip link set lo up
+
+{{- range $n := .Net.Interfaces }}
+{{- with $ifname := printf "%s-%s" $.Name $n.Name | capStringLen 15 }}
+ExecStartPre = ip link add {{ $ifname }} type veth peer {{$n.Name}} netns sloop-{{$.Name}}
+ExecStartPre = ip link set dev {{ $ifname }} up
+ExecStartPre = ip link set dev {{ $ifname }} master {{$n.Bridge.Name}}
+ExecStartPre = ip netns exec sloop-{{$.Name}} ip link set {{$n.Name}} up
+ExecStartPre = ip netns exec sloop-{{$.Name}} ip addr add {{$n.Ip}}/{{$n.Bridge.Prefix}} dev {{$n.Name}}
+ExecStartPre = ip netns exec sloop-{{$.Name}} ip route add default via {{$n.Bridge.Ip}}
+
+ExecStopPost = -ip netns exec sloop-{{$.Name}} ip link delete {{$n.Name}}
+{{- end }}
+{{- end }}
+
+ExecStopPost = -ip netns delete sloop-{{.Name}}
+{{- end }}
+
 ExecStart = systemd-nspawn \
 	--quiet \
 	--volatile=overlay \
 	--keep-unit \
 	--register=no \
-	--bind-ro={{.UtilsPath}}/hosts:/etc/hosts \
+	--bind-ro={{.ServicePath}}/hosts:/etc/hosts \
 	--bind={{.UtilsPath}}/catatonit:/catatonit \
 	--kill-signal=SIGTERM \
-	--oci-bundle={{.BundleDir}} \
+	--oci-bundle={{.ServicePath}} \
 	-M {{.Name}} \
 	--resolv-conf=bind-uplink \
-{{- if ne .Host "" }}
-	--network-namespace-path=/var/run/netns/sloop-{{.Host}} \
+{{- if .Net.Private }}
+	--network-namespace-path=/var/run/netns/sloop-{{.Name}} \
 {{- end }}
 {{- range $k, $v := .Binds }}
 	--bind={{$k}}:{{$v}} \
@@ -187,49 +227,6 @@ WantedBy=sloop.target
 {{- end }}
 `
 
-const hostTemplateStr = `
-[Unit]
-Description = Sloop network namespace {{.Name}}
-After = network-online.target
-StopWhenUnneeded = yes
-{{ range $n := .Interfaces}}
-After = sloop-bridge-{{$n.Bridge.Name}}.service
-Requires = sloop-bridge-{{$n.Bridge.Name}}.service
-{{end}}
-
-[Service]
-Slice=sloop.slice
-Type = oneshot
-RemainAfterExit = true
-PrivateNetwork = yes
-
-ExecStart = ip netns add sloop-{{.Name}}
-ExecStart = umount /var/run/netns/sloop-{{.Name}}
-ExecStart = mount --bind /proc/self/ns/net /var/run/netns/sloop-{{.Name}}
-
-ExecStart = ip link set lo up
-
-{{- range $n := .Interfaces }}
-{{- with $ifname := printf "%s-%s" $.Name $n.Name | capStringLen 15 }}
-ExecStart = nsenter -t 1 -n -- ip link add {{ $ifname }} type veth peer {{$n.Name}} netns sloop-{{$.Name}}
-ExecStart = nsenter -t 1 -n -- ip link set dev {{ $ifname }} up
-ExecStart = nsenter -t 1 -n -- ip link set dev {{ $ifname }} master {{$n.Bridge.Name}}
-ExecStart = ip link set {{$n.Name}} up
-ExecStart = ip addr add {{$n.Ip}}/{{$n.Bridge.Prefix}} dev {{$n.Name}}
-ExecStart = ip route add default via {{$n.Bridge.Ip}}
-{{- end }}
-{{- end }}
-
-{{ range $n := .Interfaces}}
-ExecStop = ip link delete {{$n.Name}}
-{{end}}
-
-ExecStop = ip netns delete sloop-{{.Name}}
-
-[Install]
-WantedBy=sloop.target
-`
-
 const bridgeTemplateStr = `
 [Unit]
 Description = Sloop bridge {{.Name}}
@@ -244,7 +241,7 @@ RemainAfterExit = true
 ExecStart = sysctl net.ipv4.ip_forward=1
 ExecStart = ip link add {{.Name}} type bridge
 ExecStart = ip link set {{.Name}} up
-ExecStart = ip addr add {{.Ip}}/16 dev {{.Name}}
+ExecStart = ip addr add {{.Ip}}/{{.Prefix}} dev {{.Name}}
 ExecStart = iptables -t nat -A POSTROUTING -s {{.Ip}}/{{.Prefix}} ! -o {{.Name}} -j MASQUERADE
 
 ExecStop = iptables -t nat -D POSTROUTING -s {{.Ip}}/{{.Prefix}} ! -o {{.Name}} -j MASQUERADE
@@ -291,7 +288,6 @@ WantedBy=sloop.target
 `
 
 func capStringLen(length int, source string) string {
-	fmt.Printf("%s %d %d\n", source, len(source), length)
 	if len(source) <= length {
 		return source
 	}
@@ -303,12 +299,10 @@ func capStringLen(length int, source string) string {
 			b64 += "1"
 		}
 	}
-	fmt.Printf("%s\n", prefix + b64[0:4])
 	return prefix + b64[0:4]
 }
 
-var unitTemplate *template.Template = template.Must(template.New("unit").Funcs(template.FuncMap{}).Parse(unitTemplateStr))
-var hostTemplate *template.Template = template.Must(template.New("host").Funcs(template.FuncMap{"capStringLen":capStringLen}).Parse(hostTemplateStr))
+var unitTemplate *template.Template = template.Must(template.New("unit").Funcs(template.FuncMap{"capStringLen": capStringLen,}).Parse(unitTemplateStr))
 var bridgeTemplate *template.Template = template.Must(template.New("bridge").Funcs(template.FuncMap{}).Parse(bridgeTemplateStr))
 var timerTemplate *template.Template = template.Must(template.New("timer").Funcs(template.FuncMap{}).Parse(timerTemplateStr))
 var timerServiceTemplate *template.Template = template.Must(template.New("timerService").Funcs(template.FuncMap{}).Parse(timerServiceTemplateStr))
@@ -316,8 +310,7 @@ var timerServiceTemplate *template.Template = template.Must(template.New("timerS
 type UnitConf struct {
 	Name string
 	UtilsPath string
-	BundleDir string
-	ServiceDir string
+	ServicePath string
 	Binds map[string]string
 	Capabilities string
 	Start string
@@ -325,12 +318,10 @@ type UnitConf struct {
 	Host string
 	Type string
 	Enable bool
+	Net cue.Network
 	Wants []string
 	Requires []string
 	After []string
-}
-type NetConf struct {
-	Bridge string
 }
 
 func handleBridge(systemd *dbus.Conn, b cue.Bridge) (bool, error) {
@@ -342,23 +333,6 @@ func handleBridge(systemd *dbus.Conn, b cue.Bridge) (bool, error) {
 	unitStr := buf.String()
 
 	unitName := "sloop-bridge-" + b.Name + ".service"
-
-	changed, err := writeLinkUnit(systemd, unitName, unitStr, false)
-	if err != nil {
-		return false, err
-	}
-	return changed, nil
-}
-
-func handleHost(systemd *dbus.Conn, h cue.Host) (bool, error) {
-	var buf bytes.Buffer
-	err := hostTemplate.Execute(&buf, h)
-	if err != nil {
-		return false, CreateServiceError.Wrap(err, "failed to execute template for host %s", h.Name)
-	}
-	unitStr := buf.String()
-
-	unitName := "sloop-host-" + h.Name + ".service"
 
 	changed, err := writeLinkUnit(systemd, unitName, unitStr, false)
 	if err != nil {
@@ -418,7 +392,7 @@ func handleServiceFiles(systemd *dbus.Conn, s cue.Service) (bool, error) {
 	if s.Type == "notify" {
 		meta.Process.Env = append(meta.Process.Env, "NOTIFY_SOCKET=/run/systemd/notify")
 	}
-	if s.Host == "" {
+	if !s.Net.Private {
 		meta.Linux.Namespaces = lo.Filter(meta.Linux.Namespaces, func(n specs.LinuxNamespace, i int) bool {
 			return n.Type != "network"
 		})
@@ -476,21 +450,24 @@ func handleService(systemd *dbus.Conn, s cue.Service) (bool, error) {
 	for _,c := range s.Exec.Reload {
 		reloadStr += fmt.Sprintf("%q ", c)
 	}
-	if s.Host != "" {
-		s.Requires = append(s.Requires, "sloop-host-" + s.Host + ".service")
-		s.After = append(s.After, "sloop-host-" + s.Host + ".service")
+	if s.Net.Private {
+		for _, i := range s.Net.Interfaces {
+			if i.Type == "bridge" {
+				s.Requires = append(s.Requires, "sloop-bridge-" + i.Bridge.Name + ".service")
+				s.After = append(s.After, "sloop-bridge-" + i.Bridge.Name + ".service")
+			}
+		}
 	}
 	var buf bytes.Buffer
 	conf := UnitConf {
 		Name: s.Name,
 		UtilsPath: common.UtilsPath,
-		BundleDir: serviceDir,
-		ServiceDir: filepath.Join(common.ServicePath, s.Name),
+		ServicePath: serviceDir,
 		Binds: bindsMap,
 		Capabilities: strings.Join(s.Capabilities, ","),
 		Start: startStr,
 		Reload: reloadStr,
-		Host: s.Host,
+		Net: s.Net,
 		Type: s.Type,
 		Enable: s.Enable,
 		Wants: s.Wants,
@@ -782,9 +759,6 @@ func Create(config cue.Config) error {
 	configUnits = append(configUnits, lo.Map(lo.Keys(config.Bridges), func (s string, _ int) string {
 		return "sloop-bridge-"+s+".service"
 	})...)
-	configUnits = append(configUnits, lo.Map(lo.Keys(config.Hosts), func (s string, _ int) string {
-		return "sloop-host-"+s+".service"
-	})...)
 	curImages, err := getCurImages();
 	if err != nil {
 		return err
@@ -813,11 +787,6 @@ func Create(config cue.Config) error {
 		return err
 	}
 
-	err = handleEtcHosts(config.Hosts)
-	if err != nil {
-		return err
-	}
-
 	changed, err := handleSlice(systemd)
 	if err != nil {
 		return err
@@ -842,20 +811,6 @@ func Create(config cue.Config) error {
 		}
 		if changed {
 			err = stopUnit(systemd, "sloop-bridge-"+n+".service")
-			if err != nil {
-				return err
-			}
-			reload = true
-		}
-	}
-
-	for n, h := range config.Hosts {
-		changed, err := handleHost(systemd, h)
-		if err != nil {
-			return err
-		}
-		if changed {
-			err = stopUnit(systemd, "sloop-host-"+n+".service")
 			if err != nil {
 				return err
 			}
@@ -920,6 +875,12 @@ func Create(config cue.Config) error {
 			reload = true
 		}
 	}
+
+	err = handleEtcHosts(config.Services, config.Bridges)
+	if err != nil {
+		return err
+	}
+
 
 	if reload {
 		systemd.ReloadContext(context.Background())

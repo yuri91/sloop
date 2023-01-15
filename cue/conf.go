@@ -9,21 +9,18 @@ type Bridge struct {
 	Prefix int `json:"prefix"`
 }
 type Interface struct {
+	Type string `json:"type"`
 	Name string `json:"name"`
 	Ip string `json:"ip"`
 	Bridge Bridge `json:"bridge"`
 }
-type Host struct {
-	Name string
-	Interfaces map[string]Interface `json:"if"`
+type Network struct {
+	Interfaces map[string]*Interface `json:"ifs"`
+	Private bool `json:"private"`
 }
 type File struct {
 	Content string
 	Permissions uint16
-}
-type PortBinding struct {
-	Host uint16
-	Service uint16
 }
 type VolumeMapping struct {
 	Name string
@@ -44,8 +41,7 @@ type Service struct {
 	Image Image
 	Exec Exec
 	Capabilities []string
-	Ports []PortBinding
-	Host string
+	Net Network
 	Type string
 	Enable bool
 	Wants []string
@@ -66,7 +62,6 @@ type Timer struct {
 type Config struct {
 	Volumes map[string]Volume `json:"$volumes"`
 	Bridges map[string]Bridge `json:"$bridges"`
-	Hosts map[string]Host `json:"$hosts"`
 	Services map[string]Service `json:"$services"`
 	Timers map[string]Timer `json:"$timers"`
 }

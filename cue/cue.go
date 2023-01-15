@@ -28,14 +28,14 @@ import $__net "net"
 }
 #Interface: {
 	name: string
-	type: "veth"
+	type: "bridge"
 	bridge: #Bridge
 	ip: $__net.IP & string | *"0.0.0.0"
 	...
 }
-#Host: {
-	name: string
-	if: [Name=_]: #Interface & {name: string | *Name}
+#Network: {
+	private: bool | *true
+	ifs: [Name=_]: #Interface & {name: string | *Name}
 	...
 }
 
@@ -63,8 +63,7 @@ import $__net "net"
 	name:  =~ "^[A-Za-z0-9-]+$"
 	exec: #Exec
 	image: #Image
-	ports: [...#PortBinding]
-	host: #Host | *null
+	net?: #Network
 	capabilities: [...string] | *[]
 	type: "notify" | "oneshot" | *"simple"
 	enable: bool | *true
@@ -99,18 +98,11 @@ $volume: [Name=_]: #Volume & {name: string | *strings.Replace(Name,"_","-",-1)}
 
 $bridge: [Name=_]: #Bridge & {name: string | *strings.Replace(Name,"_","-",-1)}
 
-$host: [Name=_]: #Host & {name: string | *strings.Replace(Name,"_","-",-1)}
-
 $service: [Name=_]: S=#Service & {
 	name: string | *strings.Replace(Name,"_","-",-1)
 	_volumeCheck: {
 		for k, v in S.image.volumes {
 			"\(v.name).is_in_$volume": [ for k1, v1 in $volume if v1.name == v.name {v1}] & [v]
-		}
-	}
-	_hostCheck: {
-		if S.host != null {
-			"\(S.host.name).is_in_host": [ for k, v in $host if v.name == S.host.name {v}] & [S.host]
 		}
 	}
 }
@@ -135,17 +127,20 @@ $bridges: {
 		"\(v.name)": v&#Bridge
 	}
 }
-$hosts: {
-	for _, v in $host {
-		"\(v.name)": v
-	}
-}
 $services: {
 	for _, s in $service {
 		"\(s.name)": {
 			name: s.name
 			type: s.type
 			exec: s.exec
+			if s.net != _|_ {
+				net: s.net
+			}
+			if s.net == _|_ {
+				net: {
+					private: false
+				}
+			}
 			image: {
 				from: s.image.from
 				env: s.image.env
@@ -171,20 +166,6 @@ $services: {
 						}
 					}
 				]
-			}
-			ports: [
-				for p in s.ports {
-					{
-						host:  p.host | p
-						service: p.service | p
-					}
-				}
-			]
-			if s.host != null {
-				host: s.host.name
-			}
-			if s.host == null {
-				host: ""
 			}
 			enable: s.enable
 			capabilities: s.capabilities
@@ -220,14 +201,12 @@ type BridgePeer struct {
 	Iface *Interface
 }
 type BridgeData struct {
-	Name string
-	Ip string
-	Prefix uint32
+	Bridge
 	Peers []BridgePeer `json:"-"`
 }
 type HostData struct {
 	Name string `json:"name"`
-	Interfaces map[string]*Interface `json:"if"`
+	Net Network `json:"net"`
 }
 func nonull(ptr []byte, msg string) {
 	if ptr == nil {
@@ -290,20 +269,20 @@ func injectIPs(value cue.Value) (*cue.Value, error) {
 		return v.Name
 	})
 	hostMap := make(map[string]HostData)
-	hostsVal := value.LookupPath(cue.ParsePath("$host"))
+	hostsVal := value.LookupPath(cue.ParsePath("$service"))
 	err = hostsVal.Decode(&hostMap)
 	if err != nil {
 		return nil, DecodeError.Wrap(err, "Error during decoding into go type")
 	}
 	for _, host := range hostMap {
-		for _, iface := range host.Interfaces {
+		for _, iface := range host.Net.Interfaces {
 			b := bridgeMap[iface.Bridge.Name]
 			b.Peers = append(b.Peers, BridgePeer{host.Name, iface})
 			bridgeMap[iface.Bridge.Name] = b
 		}
 	}
 	for _, bridge := range bridgeMap {
-		start := ip2intPrefix(bridge.Ip, bridge.Prefix)
+		start := ip2intPrefix(bridge.Ip, uint32(bridge.Prefix))
 		end := start + (1<<bridge.Prefix)
 		ip := ip2int(bridge.Ip)
 		allocMap := make(map[uint32]bool)
@@ -327,7 +306,7 @@ func injectIPs(value cue.Value) (*cue.Value, error) {
 			i.Iface.Ip = int2ip(ip)
 		}
 	}
-	newVal := value.FillPath(cue.ParsePath("$host"), hostMap)
+	newVal := value.FillPath(cue.ParsePath("$service"), hostMap)
 	return &newVal, nil
 }
 func GetCueConfig(path string) (*cue.Value, error) {
