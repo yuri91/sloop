@@ -169,9 +169,9 @@ $services: {
 			}
 			enable: s.enable
 			capabilities: s.capabilities
-			wants: [ for w in s.wants {(w & string) | ("sloop-service-" + w.name + ".service")}]
-			requires: [ for r in s.requires {(r & string) | ("sloop-service-" + r.name + ".service")}]
-			after: [ for a in s.after {(a & string) | ("sloop-service-" + a.name + ".service")}]
+			wants: [ for w in s.wants {(w & string) | (w.name + ".service")}]
+			requires: [ for r in s.requires {(r & string) | (r.name + ".service")}]
+			after: [ for a in s.after {(a & string) | (a.name + ".service")}]
 		}
 	}
 }
@@ -183,7 +183,7 @@ $timers: {
 			run: [
 				for r in t.run {
 					{
-						service: "sloop-service-" + r.service.name + ".service"
+						service: r.service.name + ".service"
 						action: r.action
 					}
 				}

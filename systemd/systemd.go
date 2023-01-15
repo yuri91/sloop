@@ -56,7 +56,7 @@ const nsenterStr string = `#!/bin/bash
 service=$1
 shift
 cmd="$@"
-pid=$(head -n 1 /sys/fs/cgroup/sloop.slice/sloop-service-${service}.service/payload/cgroup.procs)
+pid=$(head -n 1 /sys/fs/cgroup/sloop.slice/${service}.service/payload/cgroup.procs)
 env=$(cat /proc/${pid}/environ | xargs -0)
 exec nsenter -a -t ${pid} env -i - ${env} ${cmd}
 `
@@ -356,7 +356,7 @@ func handleServiceFiles(systemd *dbus.Conn, s cue.Service) (bool, error) {
 		return false, nil
 	}
 
-	err = stopUnit(systemd, "sloop-service-" + s.Name + ".service")
+	err = stopUnit(systemd, s.Name + ".service")
 	if err != nil {
 		return false, err
 	}
@@ -480,7 +480,7 @@ func handleService(systemd *dbus.Conn, s cue.Service) (bool, error) {
 	}
 	unitStr := buf.String()
 
-	changed, err := writeLinkUnit(systemd, "sloop-service-"+s.Name+".service", unitStr, s.Enable)
+	changed, err := writeLinkUnit(systemd, s.Name+".service", unitStr, s.Enable)
 	if err != nil {
 		return false, err;
 	}
@@ -501,8 +501,8 @@ func handleTimer(systemd *dbus.Conn, t cue.Timer) (bool, error) {
 	}
 	timerServiceStr := buf.String()
 
-	timerP := filepath.Join(common.UnitPath, "sloop-timer-" + t.Name + ".timer")
-	serviceP := filepath.Join(common.UnitPath, "sloop-timer-" + t.Name + ".service")
+	timerP := filepath.Join(common.UnitPath, t.Name + ".timer")
+	serviceP := filepath.Join(common.UnitPath, t.Name + ".service")
 
 	oldTimer, _ := os.ReadFile(timerP)
 	oldService, _ := os.ReadFile(serviceP)
@@ -510,11 +510,11 @@ func handleTimer(systemd *dbus.Conn, t cue.Timer) (bool, error) {
 		return false, nil
 	}
 
-	timerChanged, err := writeLinkUnit(systemd, "sloop-timer-"+t.Name+".timer", timerStr, true)
+	timerChanged, err := writeLinkUnit(systemd, t.Name+".timer", timerStr, true)
 	if err != nil {
 		return false, err;
 	}
-	unitChanged, err := writeLinkUnit(systemd, "sloop-timer-"+t.Name+".service", timerServiceStr, false)
+	unitChanged, err := writeLinkUnit(systemd, t.Name+".service", timerServiceStr, false)
 	if err != nil {
 		return false, err;
 	}
@@ -687,36 +687,6 @@ func getCurUnits() ([]string, error) {
 	return curUnits, nil
 }
 
-func getCur(kind string) ([]string, error) {
-	curUnits, err := getCurUnits()
-	if err != nil {
-		return  nil, err
-	}
-	curKind := lo.FilterMap(curUnits, func(e string, i int) (string, bool) {
-		if !strings.HasPrefix(e, "sloop-" + kind + "-") {
-			return "", false
-		}
-		trimmed := strings.TrimPrefix(e, "sloop-" + kind + "-")
-		return strings.TrimSuffix(trimmed, ".service"), true
-	})
-	return curKind, nil
-}
-
-func getCurServices() ([]string, error) {
-	return getCur("service")
-}
-
-func getCurBridges() ([]string, error) {
-	return getCur("bridge")
-}
-
-func getCurHosts() ([]string, error) {
-	return getCur("host")
-}
-func getCurTimers() ([]string, error) {
-	return getCur("timer")
-}
-
 func Create(config cue.Config) error {
 	err := os.MkdirAll(common.VolumePath, 0700)
 	if err != nil {
@@ -748,13 +718,13 @@ func Create(config cue.Config) error {
 
 	configUnits := []string{"sloop.target", "sloop.slice"}
 	configUnits = append(configUnits, lo.Map(lo.Keys(config.Services), func (s string, _ int) string {
-		return "sloop-service-"+s+".service"
+		return s+".service"
 	})...)
 	configUnits = append(configUnits, lo.Map(lo.Keys(config.Timers), func (s string, _ int) string {
-		return "sloop-timer-"+s+".timer"
+		return s+".timer"
 	})...)
 	configUnits = append(configUnits, lo.Map(lo.Keys(config.Timers), func (s string, _ int) string {
-		return "sloop-timer-"+s+".service"
+		return s+".service"
 	})...)
 	configUnits = append(configUnits, lo.Map(lo.Keys(config.Bridges), func (s string, _ int) string {
 		return "sloop-bridge-"+s+".service"
@@ -850,7 +820,7 @@ func Create(config cue.Config) error {
 			return err
 		}
 		if changed2 && !changed {
-			err = stopUnit(systemd, "sloop-service-"+n+".service")
+			err = stopUnit(systemd, n+".service")
 			if err != nil {
 				return err
 			}
@@ -864,11 +834,11 @@ func Create(config cue.Config) error {
 			return err
 		}
 		if changed {
-			err = stopUnit(systemd, "sloop-timer-"+n+".timer")
+			err = stopUnit(systemd, n+".timer")
 			if err != nil {
 				return err
 			}
-			err = stopUnit(systemd, "sloop-timer-"+n+".service")
+			err = stopUnit(systemd, n+".service")
 			if err != nil {
 				return err
 			}
