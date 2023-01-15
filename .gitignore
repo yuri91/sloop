@@ -1,3 +1,7 @@
 catatonit/catatonit
 build
 conf*
+package/pkg
+package/src
+package/sloop
+package/sloop-*
